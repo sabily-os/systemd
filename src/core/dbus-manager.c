@@ -40,6 +40,7 @@
 #include "string-util.h"
 #include "strv.h"
 #include "syslog-util.h"
+#include "taint.h"
 #include "user-util.h"
 #include "version.h"
 #include "virt.h"
@@ -126,13 +127,10 @@ static int property_get_tainted(
                 void *userdata,
                 sd_bus_error *error) {
 
-        _cleanup_free_ char *s = NULL;
-        Manager *m = ASSERT_PTR(userdata);
-
         assert(bus);
         assert(reply);
 
-        s = manager_taint_string(m);
+        _cleanup_free_ char *s = taint_string();
         if (!s)
                 return log_oom();
 
@@ -772,6 +770,7 @@ static int method_generic_unit_operation(
 
         assert(message);
         assert(m);
+        assert(handler);
 
         /* Read the first argument from the command and pass the operation to the specified per-unit
          * method. */
@@ -835,11 +834,13 @@ static int method_clean_unit(sd_bus_message *message, void *userdata, sd_bus_err
 }
 
 static int method_freeze_unit(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        return method_generic_unit_operation(message, userdata, error, bus_unit_method_freeze, 0);
+        /* Only active units can be frozen, which must be properly loaded already */
+        return method_generic_unit_operation(message, userdata, error, bus_unit_method_freeze, GENERIC_UNIT_VALIDATE_LOADED);
 }
 
 static int method_thaw_unit(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        return method_generic_unit_operation(message, userdata, error, bus_unit_method_thaw, 0);
+        /* Same as freeze above */
+        return method_generic_unit_operation(message, userdata, error, bus_unit_method_thaw, GENERIC_UNIT_VALIDATE_LOADED);
 }
 
 static int method_reset_failed_unit(sd_bus_message *message, void *userdata, sd_bus_error *error) {
@@ -947,9 +948,10 @@ static int method_list_units_by_names(sd_bus_message *message, void *userdata, s
 }
 
 static int method_get_unit_processes(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        /* Don't load a unit (since it won't have any processes if it's not loaded), but don't insist on the
-         * unit being loaded (because even improperly loaded units might still have processes around */
-        return method_generic_unit_operation(message, userdata, error, bus_unit_method_get_processes, 0);
+        /* Don't load a unit actively (since it won't have any processes if it's not loaded), but don't
+         * insist on the unit being loaded either (because even improperly loaded units might still have
+         * processes around). */
+        return method_generic_unit_operation(message, userdata, error, bus_unit_method_get_processes, /* flags = */ 0);
 }
 
 static int method_attach_processes_to_unit(sd_bus_message *message, void *userdata, sd_bus_error *error) {
@@ -1405,11 +1407,11 @@ static int dump_impl(
                  * operations, and can cause PID1 to stall. So it seems similar enough in terms of security
                  * considerations and impact, and thus use the same access check for dumps which, given the
                  * large amount of data to fetch, can stall PID1 for quite some time. */
-                r = mac_selinux_access_check(message, "reload", error);
+                r = mac_selinux_access_check(message, "reload", /* error = */ NULL);
                 if (r < 0)
                         goto ratelimited;
 
-                r = bus_verify_bypass_dump_ratelimit_async(m, message, error);
+                r = bus_verify_bypass_dump_ratelimit_async(m, message, /* error = */ NULL);
                 if (r < 0)
                         goto ratelimited;
                 if (r == 0)
@@ -1596,7 +1598,7 @@ static int method_reload(sd_bus_message *message, void *userdata, sd_bus_error *
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         /* Write a log message noting the unit or process who requested the Reload() */
-        log_caller(message, m, "Reloading");
+        log_caller(message, m, "Reload");
 
         /* Check the rate limit after the authorization succeeds, to avoid denial-of-service issues. */
         if (!ratelimit_below(&m->reload_reexec_ratelimit)) {
@@ -1642,11 +1644,11 @@ static int method_reexecute(sd_bus_message *message, void *userdata, sd_bus_erro
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         /* Write a log message noting the unit or process who requested the Reexecute() */
-        log_caller(message, m, "Reexecuting");
+        log_caller(message, m, "Reexecution");
 
         /* Check the rate limit after the authorization succeeds, to avoid denial-of-service issues. */
         if (!ratelimit_below(&m->reload_reexec_ratelimit)) {
-                log_warning("Reexecuting request rejected due to rate limit.");
+                log_warning("Reexecution request rejected due to rate limit.");
                 return sd_bus_error_setf(error,
                                          SD_BUS_ERROR_LIMITS_EXCEEDED,
                                          "Reexecute() request rejected due to rate limit.");
@@ -2185,9 +2187,8 @@ static int method_enqueue_marked_jobs(sd_bus_message *message, void *userdata, s
 }
 
 static int list_unit_files_by_patterns(sd_bus_message *message, void *userdata, sd_bus_error *error, char **states, char **patterns) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         Manager *m = ASSERT_PTR(userdata);
-        UnitFileList *item;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         _cleanup_hashmap_free_ Hashmap *h = NULL;
         int r;
 
@@ -2203,11 +2204,7 @@ static int list_unit_files_by_patterns(sd_bus_message *message, void *userdata, 
         if (r < 0)
                 return r;
 
-        h = hashmap_new(&unit_file_list_hash_ops_free);
-        if (!h)
-                return -ENOMEM;
-
-        r = unit_file_get_list(m->runtime_scope, NULL, h, states, patterns);
+        r = unit_file_get_list(m->runtime_scope, /* root_dir = */ NULL, states, patterns, &h);
         if (r < 0)
                 return r;
 
@@ -2215,8 +2212,8 @@ static int list_unit_files_by_patterns(sd_bus_message *message, void *userdata, 
         if (r < 0)
                 return r;
 
+        UnitFileList *item;
         HASHMAP_FOREACH(item, h) {
-
                 r = sd_bus_message_append(reply, "(ss)", item->path, unit_file_state_to_string(item->state));
                 if (r < 0)
                         return r;
@@ -2312,6 +2309,23 @@ static int send_unit_files_changed(sd_bus *bus, void *userdata) {
         return sd_bus_send(bus, message, NULL);
 }
 
+static void manager_unit_files_changed(Manager *m, const InstallChange *changes, size_t n_changes) {
+        int r;
+
+        assert(m);
+        assert(changes || n_changes == 0);
+
+        if (!install_changes_have_modification(changes, n_changes))
+                return;
+
+        /* See comments for this variable in manager.h */
+        m->unit_file_state_outdated = true;
+
+        r = bus_foreach_bus(m, NULL, send_unit_files_changed, NULL);
+        if (r < 0)
+                log_debug_errno(r, "Failed to send UnitFilesChanged signal, ignoring: %m");
+}
+
 static int install_error(
                 sd_bus_error *error,
                 int c,
@@ -2360,12 +2374,6 @@ static int reply_install_changes_and_free(
 
         CLEANUP_ARRAY(changes, n_changes, install_changes_free);
 
-        if (install_changes_have_modification(changes, n_changes)) {
-                r = bus_foreach_bus(m, NULL, send_unit_files_changed, NULL);
-                if (r < 0)
-                        log_debug_errno(r, "Failed to send UnitFilesChanged signal: %m");
-        }
-
         r = sd_bus_message_new_method_return(message, &reply);
         if (r < 0)
                 return r;
@@ -2412,7 +2420,7 @@ static int reply_install_changes_and_free(
 static int method_enable_unit_files_generic(
                 sd_bus_message *message,
                 Manager *m,
-                int (*call)(RuntimeScope scope, UnitFileFlags flags, const char *root_dir, char *files[], InstallChange **changes, size_t *n_changes),
+                int (*call)(RuntimeScope scope, UnitFileFlags flags, const char *root_dir, char * const *files, InstallChange **changes, size_t *n_changes),
                 bool carries_install_info,
                 sd_bus_error *error) {
 
@@ -2454,7 +2462,7 @@ static int method_enable_unit_files_generic(
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         r = call(m->runtime_scope, flags, NULL, l, &changes, &n_changes);
-        m->unit_file_state_outdated = m->unit_file_state_outdated || n_changes > 0; /* See comments for this variable in manager.h */
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2477,7 +2485,7 @@ static int method_link_unit_files(sd_bus_message *message, void *userdata, sd_bu
         return method_enable_unit_files_generic(message, userdata, unit_file_link, /* carries_install_info = */ false, error);
 }
 
-static int unit_file_preset_without_mode(RuntimeScope scope, UnitFileFlags flags, const char *root_dir, char **files, InstallChange **changes, size_t *n_changes) {
+static int unit_file_preset_without_mode(RuntimeScope scope, UnitFileFlags flags, const char *root_dir, char * const *files, InstallChange **changes, size_t *n_changes) {
         return unit_file_preset(scope, flags, root_dir, files, UNIT_FILE_PRESET_FULL, changes, n_changes);
 }
 
@@ -2527,7 +2535,7 @@ static int method_preset_unit_files_with_mode(sd_bus_message *message, void *use
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         r = unit_file_preset(m->runtime_scope, flags, NULL, l, preset_mode, &changes, &n_changes);
-        m->unit_file_state_outdated = m->unit_file_state_outdated || n_changes > 0; /* See comments for this variable in manager.h */
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2537,7 +2545,7 @@ static int method_preset_unit_files_with_mode(sd_bus_message *message, void *use
 static int method_disable_unit_files_generic(
                 sd_bus_message *message,
                 Manager *m,
-                int (*call)(RuntimeScope scope, UnitFileFlags flags, const char *root_dir, char *files[], InstallChange **changes, size_t *n_changes),
+                int (*call)(RuntimeScope scope, UnitFileFlags flags, const char *root_dir, char * const *files, InstallChange **changes, size_t *n_changes),
                 bool carries_install_info,
                 sd_bus_error *error) {
 
@@ -2581,7 +2589,7 @@ static int method_disable_unit_files_generic(
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         r = call(m->runtime_scope, flags, NULL, l, &changes, &n_changes);
-        m->unit_file_state_outdated = m->unit_file_state_outdated || n_changes > 0; /* See comments for this variable in manager.h */
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2624,7 +2632,7 @@ static int method_revert_unit_files(sd_bus_message *message, void *userdata, sd_
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         r = unit_file_revert(m->runtime_scope, NULL, l, &changes, &n_changes);
-        m->unit_file_state_outdated = m->unit_file_state_outdated || n_changes > 0; /* See comments for this variable in manager.h */
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2655,6 +2663,7 @@ static int method_set_default_target(sd_bus_message *message, void *userdata, sd
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         r = unit_file_set_default(m->runtime_scope, force ? UNIT_FILE_FORCE : 0, NULL, name, &changes, &n_changes);
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2697,7 +2706,7 @@ static int method_preset_all_unit_files(sd_bus_message *message, void *userdata,
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
         r = unit_file_preset_all(m->runtime_scope, flags, NULL, preset_mode, &changes, &n_changes);
-        m->unit_file_state_outdated = m->unit_file_state_outdated || n_changes > 0; /* See comments for this variable in manager.h */
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2737,7 +2746,7 @@ static int method_add_dependency_unit_files(sd_bus_message *message, void *userd
                 return -EINVAL;
 
         r = unit_file_add_dependency(m->runtime_scope, flags, NULL, l, target, dep, &changes, &n_changes);
-        m->unit_file_state_outdated = m->unit_file_state_outdated || n_changes > 0; /* See comments for this variable in manager.h */
+        manager_unit_files_changed(m, changes, n_changes);
         if (r < 0)
                 return install_error(error, r, changes, n_changes);
 
@@ -2932,7 +2941,7 @@ static int aux_scope_from_message(Manager *m, sd_bus_message *message, Unit **re
 
                 unit = manager_get_unit_by_pidref(m, &p);
                 if (!unit) {
-                        log_unit_warning_errno(from, SYNTHETIC_ERRNO(ENOENT), "Failed to get unit from PIDFD, ignoring: %m");
+                        log_unit_warning(from, "Failed to get unit from PIDFD, ignoring.");
                         continue;
                 }
 
@@ -3050,7 +3059,7 @@ const sd_bus_vtable bus_manager_vtable[] = {
         BUS_PROPERTY_DUAL_TIMESTAMP("InitRDTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_INITRD]), SD_BUS_VTABLE_PROPERTY_CONST),
         BUS_PROPERTY_DUAL_TIMESTAMP("UserspaceTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_USERSPACE]), SD_BUS_VTABLE_PROPERTY_CONST),
         BUS_PROPERTY_DUAL_TIMESTAMP("FinishTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_FINISH]), SD_BUS_VTABLE_PROPERTY_CONST),
-        BUS_PROPERTY_DUAL_TIMESTAMP("SoftRebootStartTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_SOFTREBOOT_START]), SD_BUS_VTABLE_PROPERTY_CONST),
+        BUS_PROPERTY_DUAL_TIMESTAMP("ShutdownStartTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_SHUTDOWN_START]), SD_BUS_VTABLE_PROPERTY_CONST),
         BUS_PROPERTY_DUAL_TIMESTAMP("SecurityStartTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_SECURITY_START]), SD_BUS_VTABLE_PROPERTY_CONST),
         BUS_PROPERTY_DUAL_TIMESTAMP("SecurityFinishTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_SECURITY_FINISH]), SD_BUS_VTABLE_PROPERTY_CONST),
         BUS_PROPERTY_DUAL_TIMESTAMP("GeneratorsStartTimestamp", offsetof(Manager, timestamps[MANAGER_TIMESTAMP_GENERATORS_START]), SD_BUS_VTABLE_PROPERTY_CONST),

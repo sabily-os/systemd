@@ -183,6 +183,17 @@ All tools:
   expected format is six groups of two hexadecimal digits separated by colons,
   e.g. `SYSTEMD_NSPAWN_NETWORK_MAC=12:34:56:78:90:AB`
 
+`systemd-vmspawn`:
+
+* `$SYSTEMD_VMSPAWN_NETWORK_MAC=...` — if set, allows users to set a specific MAC
+  address for a VM, ensuring that it uses the provided value instead of
+  generating a random one. It is effective when used with `--network-tap`. The
+  expected format is six groups of two hexadecimal digits separated by colons,
+  e.g. `SYSTEMD_VMSPAWN_NETWORK_MAC=12:34:56:78:90:AB`
+
+* `$SYSTEMD_VMSPAWN_QEMU_EXTRA=…` – may contain additional command line
+  arguments to append the qemu command line.
+
 `systemd-logind`:
 
 * `$SYSTEMD_BYPASS_HIBERNATION_MEMORY_CHECK=1` — if set, report that
@@ -330,7 +341,7 @@ All tools:
   for cases where we don't need to track given unit type, e.g. `--user` manager
   often doesn't need to deal with device or swap units because they are
   handled by the `--system` manager (PID 1). Note that setting certain unit
-  type as unsupported may not prevent loading some units of that type if they
+  type as unsupported might not prevent loading some units of that type if they
   are referenced by other units of another supported type.
 
 * `$SYSTEMD_DEFAULT_MOUNT_RATE_LIMIT_BURST` — can be set to override the mount
@@ -675,4 +686,41 @@ Tools using the Varlink protocol (such as `varlinkctl`) or sd-bus (such as
 * `$SYSTEMD_VARLINK_LISTEN` – interpreted by some tools that provide a Varlink
   service. Takes a file system path: if specified the tool will listen on an
   `AF_UNIX` stream socket on the specified path in addition to whatever else it
-  would listen on.
+  would listen on. If set to "-" the tool will turn stdin/stdout into a Varlink
+  connection.
+
+`systemd-mountfsd`:
+
+* `$SYSTEMD_MOUNTFSD_TRUSTED_DIRECTORIES` – takes a boolean argument. If true
+  disk images from the usual disk image directories (`/var/lib/machines/`,
+  `/var/lib/confexts/`, …) will be considered "trusted", i.e. are validated
+  with a more relaxed image policy (typically not requiring Verity signature
+  checking) than those from other directories (where Verity signature checks
+  are mandatory). If false all images are treated the same, regardless if
+  placed in the usual disk image directories or elsewhere. If not set defaults
+  to a compile time setting.
+
+* `$SYSTEMD_MOUNTFSD_IMAGE_POLICY_TRUSTED`,
+  `$SYSTEMD_MOUNTFSD_IMAGE_POLICY_UNTRUSTED` – the default image policy to
+  apply to trusted and untrusted disk images. An image is considered trusted if
+  placed in a trusted disk image directory (see above), or if suitable polkit
+  authentication was acquired. See `systemd.image-policy(7)` for the valid
+  syntax for image policy strings.
+
+`systemd-run`, `run0`, `systemd-nspawn`, `systemd-vmspawn`:
+
+* `$SYSTEMD_TINT_BACKGROUND` – Takes a boolean. When false the automatic
+  tinting of the background for containers, VMs, and interactive `systemd-run`
+  and `run0` invocations is turned off. Note that this environment variable has
+  no effect if the background color is explicitly selected via the relevant
+  `--background=` switch of the tool.
+
+* `$SYSTEMD_ADJUST_TERMINAL_TITLE` – Takes a boolean. When false the terminal
+  window title will not be updated for interactive invocation of the mentioned
+  tools.
+
+`systemd-hostnamed`, `systemd-importd`, `systemd-localed`, `systemd-machined`,
+`systemd-portabled`, `systemd-timedated`:
+
+* `SYSTEMD_EXIT_ON_IDLE` – Takes a boolean. When false, the exit-on-idle logic
+  of these services is disabled, making it easier to debug them.

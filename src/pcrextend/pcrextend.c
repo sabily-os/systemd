@@ -2,11 +2,13 @@
 
 #include <getopt.h>
 
-#include <sd-messages.h>
+#include "sd-json.h"
+#include "sd-messages.h"
 
 #include "build.h"
 #include "efi-loader.h"
 #include "escape.h"
+#include "json-util.h"
 #include "main-func.h"
 #include "openssl-util.h"
 #include "parse-argument.h"
@@ -199,7 +201,7 @@ static int extend_now(unsigned pcr, const void *data, size_t size, Tpm2Userspace
         _cleanup_(tpm2_context_unrefp) Tpm2Context *c = NULL;
         int r;
 
-        r = tpm2_context_new(arg_tpm2_device, &c);
+        r = tpm2_context_new_or_warn(arg_tpm2_device, &c);
         if (r < 0)
                 return r;
 
@@ -256,12 +258,12 @@ static void method_extend_parameters_done(MethodExtendParameters *p) {
         iovec_done(&p->data);
 }
 
-static int vl_method_extend(Varlink *link, JsonVariant *parameters, VarlinkMethodFlags flags, void *userdata) {
+static int vl_method_extend(Varlink *link, sd_json_variant *parameters, VarlinkMethodFlags flags, void *userdata) {
 
-        static const JsonDispatch dispatch_table[] = {
-                { "pcr",  _JSON_VARIANT_TYPE_INVALID, json_dispatch_uint,           offsetof(MethodExtendParameters, pcr),  JSON_MANDATORY },
-                { "text", JSON_VARIANT_STRING,        json_dispatch_const_string,   offsetof(MethodExtendParameters, text), 0              },
-                { "data", JSON_VARIANT_STRING,        json_dispatch_unbase64_iovec, offsetof(MethodExtendParameters, data), 0              },
+        static const sd_json_dispatch_field dispatch_table[] = {
+                { "pcr",  _SD_JSON_VARIANT_TYPE_INVALID, sd_json_dispatch_uint,         offsetof(MethodExtendParameters, pcr),  SD_JSON_MANDATORY },
+                { "text", SD_JSON_VARIANT_STRING,        sd_json_dispatch_const_string, offsetof(MethodExtendParameters, text), 0              },
+                { "data", SD_JSON_VARIANT_STRING,        json_dispatch_unbase64_iovec,  offsetof(MethodExtendParameters, data), 0              },
                 {}
         };
         _cleanup_(method_extend_parameters_done) MethodExtendParameters p = {

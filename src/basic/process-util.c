@@ -25,6 +25,7 @@
 #include "alloc-util.h"
 #include "architecture.h"
 #include "argv-util.h"
+#include "cgroup-util.h"
 #include "dirent-util.h"
 #include "env-file.h"
 #include "env-util.h"
@@ -55,6 +56,7 @@
 #include "string-table.h"
 #include "string-util.h"
 #include "terminal-util.h"
+#include "time-util.h"
 #include "user-util.h"
 #include "utf8.h"
 
@@ -730,7 +732,7 @@ int get_process_ppid(pid_t pid, pid_t *ret) {
         return 0;
 }
 
-int pid_get_start_time(pid_t pid, uint64_t *ret) {
+int pid_get_start_time(pid_t pid, usec_t *ret) {
         _cleanup_free_ char *line = NULL;
         const char *p;
         int r;
@@ -750,13 +752,12 @@ int pid_get_start_time(pid_t pid, uint64_t *ret) {
         p = strrchr(line, ')');
         if (!p)
                 return -EIO;
-
         p++;
 
         unsigned long llu;
 
         if (sscanf(p, " "
-                   "%*c "  /* state */
+                   "%*c " /* state */
                    "%*u " /* ppid */
                    "%*u " /* pgrp */
                    "%*u " /* session */
@@ -780,13 +781,13 @@ int pid_get_start_time(pid_t pid, uint64_t *ret) {
                 return -EIO;
 
         if (ret)
-                *ret = llu;
+                *ret = jiffies_to_usec(llu); /* CLOCK_BOOTTIME */
 
         return 0;
 }
 
-int pidref_get_start_time(const PidRef *pid, uint64_t *ret) {
-        uint64_t t;
+int pidref_get_start_time(const PidRef *pid, usec_t *ret) {
+        usec_t t;
         int r;
 
         if (!pidref_is_set(pid))
@@ -2108,7 +2109,13 @@ int posix_spawn_wrapper(
 
                 return FLAGS_SET(flags, POSIX_SPAWN_SETCGROUP);
         }
-        if (!(ERRNO_IS_NOT_SUPPORTED(r) || ERRNO_IS_PRIVILEGE(r)))
+        if (ERRNO_IS_NOT_SUPPORTED(r)) {
+                /* clone3() could also return EOPNOTSUPP if the target cgroup is in threaded mode. */
+                if (cgroup && cg_is_threaded(cgroup) > 0)
+                        return -EUCLEAN;
+
+                /* clone3() not available? */
+        } else if (!ERRNO_IS_PRIVILEGE(r))
                 return -r;
 
         /* Compiled on a newer host, or seccomp&friends blocking clone3()? Fallback, but need to change the

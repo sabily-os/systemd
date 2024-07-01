@@ -68,7 +68,7 @@ EFI_ARCHES: list[str] = sum(EFI_ARCH_MAP.values(), [])
 
 # Default configuration directories and file name.
 # When the user does not specify one, the directories are searched in this order and the first file found is used.
-DEFAULT_CONFIG_DIRS = ['/run/systemd', '/etc/systemd', '/usr/local/lib/systemd', '/usr/lib/systemd']
+DEFAULT_CONFIG_DIRS = ['/etc/systemd', '/run/systemd', '/usr/local/lib/systemd', '/usr/lib/systemd']
 DEFAULT_CONFIG_FILE = 'ukify.conf'
 
 class Style:
@@ -303,6 +303,7 @@ class Uname:
 DEFAULT_SECTIONS_TO_SHOW = {
         '.linux'    : 'binary',
         '.initrd'   : 'binary',
+        '.ucode'    : 'binary',
         '.splash'   : 'binary',
         '.dtb'      : 'binary',
         '.cmdline'  : 'text',
@@ -855,6 +856,7 @@ def make_uki(opts):
         ('.splash',  opts.splash,     True ),
         ('.pcrpkey', pcrpkey,         True ),
         ('.initrd',  initrd,          True ),
+        ('.ucode',   opts.microcode,  True ),
 
         # linux shall be last to leave breathing room for decompression.
         # We'll add it later.
@@ -1280,6 +1282,14 @@ CONFIG_ITEMS = [
     ),
 
     ConfigItem(
+        '--microcode',
+        metavar = 'UCODE',
+        type = pathlib.Path,
+        help = 'microcode file [.ucode section]',
+        config_key = 'UKI/Microcode',
+    ),
+
+    ConfigItem(
         ('--config', '-c'),
         metavar = 'PATH',
         type = pathlib.Path,
@@ -1636,7 +1646,7 @@ def finalize_options(opts):
         opts.verb = 'build'
 
     # Check that --pcr-public-key=, --pcr-private-key=, and --phases=
-    # have either the same number of arguments are are not specified at all.
+    # have either the same number of arguments or are not specified at all.
     n_pcr_pub = None if opts.pcr_public_keys is None else len(opts.pcr_public_keys)
     n_pcr_priv = None if opts.pcr_private_keys is None else len(opts.pcr_private_keys)
     n_phase_path_groups = None if opts.phase_path_groups is None else len(opts.phase_path_groups)

@@ -2,17 +2,23 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 set -e
 
-if [ ! -d "pkg/$PKG_SUBDIR/debian" ]; then
-    echo "deb rules not found at pkg/$PKG_SUBDIR/debian, run mkosi once with -ff to make sure the rules are cloned" >&2
+if ((NO_BUILD)); then
+    exit 0
+fi
+
+# shellcheck source=/dev/null
+. /usr/lib/os-release
+
+if [ ! -d "pkg/$ID/debian" ]; then
+    echo "deb rules not found at pkg/$ID/debian, run mkosi once with -ff to make sure the rules are cloned" >&2
     exit 1
 fi
 
 # We transplant the debian/ folder from the deb package sources into the upstream sources.
-mount --mkdir --bind "$SRCDIR/pkg/$PKG_SUBDIR/debian" "$SRCDIR"/debian
+mount --mkdir --bind "$SRCDIR/pkg/$ID/debian" "$SRCDIR"/debian
 
-# We hide the patches/ directory by mounting an empty directory on top so they don't get applied.
-TMP=$(mktemp -d)
-mount --bind "$TMP" "$SRCDIR"/debian/patches
+# We remove the patches so they don't get applied.
+rm -rf "$SRCDIR"/debian/patches/*
 
 # While the build directory can be specified through DH_OPTIONS, the default one is hardcoded everywhere so
 # we have to use that. Because it is architecture dependent, we query it using dpkg-architecture first.
@@ -38,18 +44,61 @@ EOF
 cat debian/changelog >>debian/changelog.new
 mv debian/changelog.new debian/changelog
 
+MKOSI_CFLAGS="-O0"
+if ((LLVM)); then
+    # TODO: Remove -fno-sanitize-function when https://github.com/systemd/systemd/issues/29972 is fixed.
+    MKOSI_CFLAGS="$MKOSI_CFLAGS -shared-libasan -fno-sanitize=function"
+fi
+
+MKOSI_LDFLAGS=""
+if ((LLVM)) && [[ -n "$SANITIZERS" ]]; then
+    MKOSI_LDFLAGS="$MKOSI_LDFLAGS -Wl,-rpath=$(clang --print-file-name="")lib/linux"
+fi
+
+MKOSI_MESON_OPTIONS="-D mode=developer -D b_sanitize=${SANITIZERS:-none}"
+if ((WIPE)); then
+    MKOSI_MESON_OPTIONS="$MKOSI_MESON_OPTIONS --wipe"
+fi
+
+# TODO: Drop GENSYMBOLS_LEVEL once https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=986746 is fixed.
 build() {
-    DEB_BUILD_OPTIONS="$( ((WITH_TESTS)) || echo nocheck) $( ((WITH_DOCS)) || echo nodoc) nostrip terse optimize=-lto" \
-    DEB_BUILD_PROFILES="$( ((WITH_TESTS)) || echo nocheck) $( ((WITH_DOCS)) || echo nodoc) pkg.systemd.upstream" \
-    DEB_CFLAGS_APPEND="-Og" \
+    env \
+    CC="$( ((LLVM)) && echo clang || echo gcc)" \
+    CXX="$( ((LLVM)) && echo clang++ || echo g++)" \
+    CC_LD="$( ((LLVM)) && echo lld)" \
+    CXX_LD="$( ((LLVM)) && echo lld)" \
+    DEB_BUILD_OPTIONS="$(awk '$1=$1' <<<"\
+        $( ((WITH_TESTS)) || echo nocheck) \
+        $( ((WITH_DOCS)) || echo nodoc) \
+        $( ((WITH_DEBUG)) && echo debug || echo nostrip) \
+        $( ! ((MESON_VERBOSE)) && echo terse) \
+        optimize=-lto \
+        hardening=-fortify \
+    ")" \
+    DEB_BUILD_PROFILES="$(awk '$1=$1' <<<"\
+        $( ((WITH_TESTS)) || echo nocheck) \
+        $( ((WITH_DOCS)) || echo nodoc) \
+        pkg.systemd.upstream \
+    ")" \
+    DEB_CFLAGS_APPEND="$MKOSI_CFLAGS $CFLAGS" \
+    DEB_CXXFLAGS_APPEND="$MKOSI_CFLAGS $CFLAGS" \
+    DEB_LDFLAGS_APPEND="$MKOSI_LDFLAGS $LDFLAGS" \
     DPKG_FORCE="unsafe-io" \
     DPKG_DEB_COMPRESSOR_TYPE="none" \
     DH_MISSING="--fail-missing" \
-    CONFFLAGS_UPSTREAM="-D mode=developer -D b_sanitize=${SANITIZERS:-none}" \
-    dpkg-buildpackage \
+    CONFFLAGS_UPSTREAM="$MKOSI_MESON_OPTIONS $MESON_OPTIONS" \
+    GENSYMBOLS_LEVEL="$( ((LLVM)) && echo 0 || echo 1)" \
+        dpkg-buildpackage \
         --no-pre-clean \
         --unsigned-changes \
         --build=binary
+
+    EXIT_STATUS=$?
+
+    # Make sure we don't reconfigure twice.
+    MKOSI_MESON_OPTIONS="${MKOSI_MESON_OPTIONS//"--wipe"/}"
+
+    return $EXIT_STATUS
 }
 
 if ! build; then
@@ -86,5 +135,8 @@ if ! build; then
     build
 fi
 
-cp ../*.deb "$PACKAGEDIR"
-cp ../*.deb "$OUTPUTDIR"
+(
+    shopt -s nullglob
+    cp ../*.deb ../*.ddeb "$PACKAGEDIR"
+    cp ../*.deb ../*.ddeb "$OUTPUTDIR"
+)

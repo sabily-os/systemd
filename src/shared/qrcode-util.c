@@ -18,11 +18,16 @@
 
 static void *qrcode_dl = NULL;
 
-static DLSYM_FUNCTION(QRcode_encodeString);
-static DLSYM_FUNCTION(QRcode_free);
+static DLSYM_PROTOTYPE(QRcode_encodeString) = NULL;
+static DLSYM_PROTOTYPE(QRcode_free) = NULL;
 
 int dlopen_qrencode(void) {
         int r;
+
+        ELF_NOTE_DLOPEN("qrencode",
+                        "Support for generating QR codes",
+                        ELF_NOTE_DLOPEN_PRIORITY_SUGGESTED,
+                        "libqrencode.so.4", "libqrencode.so.3");
 
         FOREACH_STRING(s, "libqrencode.so.4", "libqrencode.so.3") {
                 r = dlopen_many_sym_or_warn(

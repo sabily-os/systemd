@@ -18,6 +18,7 @@
 #include "networkd-link.h"
 #include "networkd-manager.h"
 #include "networkd-network.h"
+#include "networkd-ntp.h"
 #include "networkd-queue.h"
 #include "networkd-route-util.h"
 #include "parse-util.h"
@@ -197,8 +198,14 @@ int address_acquire_from_dhcp_server_leases_file(Link *link, const Address *addr
                         lease_file,
                         &a,
                         &prefixlen);
-        if (r < 0)
+        if (r == -ENOENT)
                 return r;
+        if (r < 0)
+                return log_warning_errno(r, "Failed to load lease file %s: %s",
+                                         lease_file,
+                                         r == -ENXIO ? "expected JSON content not found" :
+                                         r == -EINVAL ? "invalid JSON" :
+                                         STRERROR(r));
 
         if (prefixlen != address->prefixlen)
                 return -ENOENT;
@@ -336,7 +343,7 @@ static int link_push_uplink_to_dhcp_server(
                         addresses[n_addresses++] = ia;
                 }
 
-                use_dhcp_lease_data = link->network->dhcp_use_dns;
+                use_dhcp_lease_data = link_get_use_dns(link, NETWORK_CONFIG_SOURCE_DHCP4);
                 break;
 
         case SD_DHCP_LEASE_NTP: {
@@ -359,7 +366,7 @@ static int link_push_uplink_to_dhcp_server(
                         addresses[n_addresses++] = ia.in;
                 }
 
-                use_dhcp_lease_data = link->network->dhcp_use_ntp;
+                use_dhcp_lease_data = link_get_use_ntp(link, NETWORK_CONFIG_SOURCE_DHCP4);
                 break;
         }
 

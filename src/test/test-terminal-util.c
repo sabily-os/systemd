@@ -155,7 +155,7 @@ TEST(get_ctty) {
         }
 
         /* In almost all cases STDIN will match our controlling TTY. Let's verify that and then compare paths */
-        assert_se(fstat(STDIN_FILENO, &st) >= 0);
+        ASSERT_OK_ERRNO(fstat(STDIN_FILENO, &st));
         if (S_ISCHR(st.st_mode) && st.st_rdev == devnr) {
                 _cleanup_free_ char *stdin_name = NULL;
 
@@ -174,6 +174,39 @@ TEST(get_default_background_color) {
                 log_notice_errno(r, "Can't get terminal default background color: %m");
         else
                 log_notice("R=%g G=%g B=%g", red, green, blue);
+}
+
+static void test_get_color_mode_with_env(const char *key, const char *val, ColorMode expected) {
+        ASSERT_OK(setenv(key, val, true));
+        reset_terminal_feature_caches();
+        log_info("get_color_mode($%s=%s): %s", key, val, color_mode_to_string(get_color_mode()));
+        ASSERT_EQ(get_color_mode(), expected);
+}
+
+TEST(get_color_mode) {
+        log_info("get_color_mode(default): %s", color_mode_to_string(get_color_mode()));
+        ASSERT_OK(get_color_mode());
+
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "0",     COLOR_OFF);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "no",    COLOR_OFF);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "16",    COLOR_16);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "256",   COLOR_256);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "1",     COLOR_24BIT);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "yes",   COLOR_24BIT);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "24bit", COLOR_24BIT);
+
+        ASSERT_OK(setenv("NO_COLOR", "1", true));
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "42",      COLOR_OFF);
+        test_get_color_mode_with_env("SYSTEMD_COLORS", "invalid", COLOR_OFF);
+        ASSERT_OK(unsetenv("NO_COLOR"));
+        ASSERT_OK(unsetenv("SYSTEMD_COLORS"));
+
+        test_get_color_mode_with_env("COLORTERM", "truecolor", terminal_is_dumb() ? COLOR_OFF : COLOR_24BIT);
+        test_get_color_mode_with_env("COLORTERM", "24bit",     terminal_is_dumb() ? COLOR_OFF : COLOR_24BIT);
+        test_get_color_mode_with_env("COLORTERM", "invalid",   terminal_is_dumb() ? COLOR_OFF : COLOR_256);
+        test_get_color_mode_with_env("COLORTERM", "42",        terminal_is_dumb() ? COLOR_OFF : COLOR_256);
+        unsetenv("COLORTERM");
+        reset_terminal_feature_caches();
 }
 
 DEFINE_TEST_MAIN(LOG_INFO);

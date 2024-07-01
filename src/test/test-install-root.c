@@ -23,12 +23,14 @@ TEST(basic_mask_and_enable) {
         InstallChange *changes = NULL;
         size_t n_changes = 0;
 
-        assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "a.service", NULL) == -ENOENT);
-        assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "b.service", NULL) == -ENOENT);
-        assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "c.service", NULL) == -ENOENT);
-        assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "d.service", NULL) == -ENOENT);
-        assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "e.service", NULL) == -ENOENT);
-        assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "f.service", NULL) == -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "a.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "b.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "c.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "d.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "e.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "f.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "g.service", NULL), -ENOENT);
+        ASSERT_EQ(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "h.service", NULL), -ENOENT);
 
         p = strjoina(root, "/usr/lib/systemd/system/a.service");
         assert_se(write_string_file(p,
@@ -60,9 +62,9 @@ TEST(basic_mask_and_enable) {
         assert_se(unit_file_mask(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("a.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/dev/null"));
+        ASSERT_STREQ(changes[0].source, "/dev/null");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
 
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
@@ -81,16 +83,16 @@ TEST(basic_mask_and_enable) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("a.service"), &changes, &n_changes) == 1);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/a.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/a.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -109,7 +111,7 @@ TEST(basic_mask_and_enable) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -128,9 +130,9 @@ TEST(basic_mask_and_enable) {
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("d.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/a.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/a.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -145,10 +147,10 @@ TEST(basic_mask_and_enable) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[1].source, "/usr/lib/systemd/system/a.service"));
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].source, "/usr/lib/systemd/system/a.service");
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -186,17 +188,35 @@ TEST(basic_mask_and_enable) {
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("f.service"), &changes, &n_changes) == 1);
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/f.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/f.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/x.target.wants/f.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         assert_se(changes[1].type == INSTALL_CHANGE_DESTINATION_NOT_PRESENT);
         p = strjoina(root, "/usr/lib/systemd/system/f.service");
-        assert_se(streq(changes[1].source, p));
-        assert_se(streq(changes[1].path, "x.target"));
+        ASSERT_STREQ(changes[1].source, p);
+        ASSERT_STREQ(changes[1].path, "x.target");
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
         assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "f.service", &state) >= 0 && state == UNIT_FILE_ENABLED);
+
+        /* Test enabling units with only Alias= (unit_file_enable should return > 0 to indicate we did
+         * something, #33411) */
+
+        p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR "/g.service");
+        ASSERT_OK(write_string_file(p,
+                                    "[Install]\n"
+                                    "Alias=h.service\n", WRITE_STRING_FILE_CREATE));
+
+        ASSERT_GT(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("g.service"), &changes, &n_changes), 0);
+        install_changes_free(changes, n_changes);
+        changes = NULL; n_changes = 0;
+
+        ASSERT_OK(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "g.service", &state));
+        ASSERT_EQ(state, UNIT_FILE_ENABLED);
+
+        ASSERT_OK(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "h.service", &state));
+        ASSERT_EQ(state, UNIT_FILE_ALIAS);
 }
 
 TEST(linked_units) {
@@ -255,9 +275,9 @@ TEST(linked_units) {
         assert_se(unit_file_link(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("/opt/linked.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/opt/linked.service"));
+        ASSERT_STREQ(changes[0].source, "/opt/linked.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/linked.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -268,7 +288,7 @@ TEST(linked_units) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/linked.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -285,9 +305,9 @@ TEST(linked_units) {
 
                 if (s && streq(changes[i].path, s))
                         /* The alias symlink should point within the search path. */
-                        assert_se(streq(changes[i].source, SYSTEM_CONFIG_UNIT_DIR"/linked.service"));
+                        ASSERT_STREQ(changes[i].source, SYSTEM_CONFIG_UNIT_DIR"/linked.service");
                 else
-                        assert_se(streq(changes[i].source, "/opt/linked.service"));
+                        ASSERT_STREQ(changes[i].source, "/opt/linked.service");
 
                 if (p && streq(changes[i].path, p))
                         p = NULL;
@@ -335,7 +355,7 @@ TEST(linked_units) {
         q = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/linked2.service");
         for (i = 0 ; i < n_changes; i++) {
                 assert_se(changes[i].type == INSTALL_CHANGE_SYMLINK);
-                assert_se(streq(changes[i].source, "/opt/linked2.service"));
+                ASSERT_STREQ(changes[i].source, "/opt/linked2.service");
 
                 if (p && streq(changes[i].path, p))
                         p = NULL;
@@ -353,7 +373,7 @@ TEST(linked_units) {
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(startswith(changes[0].path, root));
         assert_se(endswith(changes[0].path, "linked3.service"));
-        assert_se(streq(changes[0].source, "/opt/linked3.service"));
+        ASSERT_STREQ(changes[0].source, "/opt/linked3.service");
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 }
@@ -375,7 +395,7 @@ TEST(default) {
         assert_se(unit_file_set_default(RUNTIME_SCOPE_SYSTEM, 0, root, "idontexist.target", &changes, &n_changes) == -ENOENT);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == -ENOENT);
-        assert_se(streq_ptr(changes[0].path, "idontexist.target"));
+        ASSERT_STREQ(changes[0].path, "idontexist.target");
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -384,14 +404,14 @@ TEST(default) {
         assert_se(unit_file_set_default(RUNTIME_SCOPE_SYSTEM, 0, root, "test-default.target", &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/test-default-real.target"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/test-default-real.target");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR "/" SPECIAL_DEFAULT_TARGET);
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
         assert_se(unit_file_get_default(RUNTIME_SCOPE_SYSTEM, root, &def) >= 0);
-        assert_se(streq_ptr(def, "test-default-real.target"));
+        ASSERT_STREQ(def, "test-default-real.target");
 }
 
 TEST(add_dependency) {
@@ -414,9 +434,9 @@ TEST(add_dependency) {
         assert_se(unit_file_add_dependency(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("add-dependency-test-service.service"), "add-dependency-test-target.target", UNIT_WANTS, &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/real-add-dependency-test-service.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/real-add-dependency-test-service.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/real-add-dependency-test-target.target.wants/real-add-dependency-test-service.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 }
@@ -455,9 +475,9 @@ TEST(template_enable) {
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("template@.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/template@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/template@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/template@def.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -471,7 +491,7 @@ TEST(template_enable) {
         assert_se(unit_file_disable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("template@.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -486,9 +506,9 @@ TEST(template_enable) {
 
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("template@foo.service"), &changes, &n_changes) >= 0);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/template@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/template@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/template@foo.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -502,7 +522,7 @@ TEST(template_enable) {
         assert_se(unit_file_disable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("template@foo.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -519,9 +539,9 @@ TEST(template_enable) {
 
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("template-symlink@quux.service"), &changes, &n_changes) >= 0);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/template@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/template@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/template@quux.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -565,9 +585,9 @@ TEST(indirect) {
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("indirectc.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/indirectb.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/indirectb.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/indirectb.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -579,7 +599,7 @@ TEST(indirect) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/indirectb.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 }
@@ -627,9 +647,9 @@ TEST(preset_and_list) {
         assert_se(unit_file_preset(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("preset-yes.service"), UNIT_FILE_PRESET_FULL, &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/preset-yes.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/preset-yes.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/preset-yes.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -641,7 +661,7 @@ TEST(preset_and_list) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/preset-yes.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -667,8 +687,8 @@ TEST(preset_and_list) {
         for (i = 0; i < n_changes; i++) {
 
                 if (changes[i].type == INSTALL_CHANGE_SYMLINK) {
-                        assert_se(streq(changes[i].source, "/usr/lib/systemd/system/preset-yes.service"));
-                        assert_se(streq(changes[i].path, p));
+                        ASSERT_STREQ(changes[i].source, "/usr/lib/systemd/system/preset-yes.service");
+                        ASSERT_STREQ(changes[i].path, p);
                 } else
                         assert_se(changes[i].type == INSTALL_CHANGE_UNLINK);
         }
@@ -680,8 +700,7 @@ TEST(preset_and_list) {
         assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "preset-no.service", &state) >= 0 && state == UNIT_FILE_DISABLED);
         assert_se(unit_file_get_state(RUNTIME_SCOPE_SYSTEM, root, "preset-ignore.service", &state) >= 0 && state == UNIT_FILE_DISABLED);
 
-        assert_se(h = hashmap_new(&unit_file_list_hash_ops_free));
-        assert_se(unit_file_get_list(RUNTIME_SCOPE_SYSTEM, root, h, NULL, NULL) >= 0);
+        ASSERT_OK(unit_file_get_list(RUNTIME_SCOPE_SYSTEM, root, NULL, NULL, &h));
 
         p = strjoina(root, "/usr/lib/systemd/system/preset-yes.service");
         q = strjoina(root, "/usr/lib/systemd/system/preset-no.service");
@@ -735,7 +754,7 @@ TEST(revert) {
         assert_se(unit_file_revert(RUNTIME_SCOPE_SYSTEM, root, STRV_MAKE("xx.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -746,11 +765,11 @@ TEST(revert) {
         assert_se(unit_file_revert(RUNTIME_SCOPE_SYSTEM, root, STRV_MAKE("xx.service"), &changes, &n_changes) >= 0);
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
 
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/xx.service.d");
         assert_se(changes[1].type == INSTALL_CHANGE_UNLINK);
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 }
@@ -786,9 +805,9 @@ TEST(preset_order) {
         assert_se(unit_file_preset(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("prefix-1.service"), UNIT_FILE_PRESET_FULL, &changes, &n_changes) >= 0);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/prefix-1.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/prefix-1.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/prefix-1.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -895,12 +914,12 @@ TEST(with_dropin) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-1.service"));
-        assert_se(streq(changes[1].source, "/usr/lib/systemd/system/with-dropin-1.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-1.service");
+        ASSERT_STREQ(changes[1].source, "/usr/lib/systemd/system/with-dropin-1.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-1.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/graphical.target.wants/with-dropin-1.service");
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -909,12 +928,12 @@ TEST(with_dropin) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, SYSTEM_CONFIG_UNIT_DIR"/with-dropin-2.service"));
-        assert_se(streq(changes[1].source, SYSTEM_CONFIG_UNIT_DIR"/with-dropin-2.service"));
+        ASSERT_STREQ(changes[0].source, SYSTEM_CONFIG_UNIT_DIR"/with-dropin-2.service");
+        ASSERT_STREQ(changes[1].source, SYSTEM_CONFIG_UNIT_DIR"/with-dropin-2.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-2.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/graphical.target.wants/with-dropin-2.service");
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -923,12 +942,12 @@ TEST(with_dropin) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-3.service"));
-        assert_se(streq(changes[1].source, "/usr/lib/systemd/system/with-dropin-3.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-3.service");
+        ASSERT_STREQ(changes[1].source, "/usr/lib/systemd/system/with-dropin-3.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-3.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/graphical.target.wants/with-dropin-3.service");
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -937,12 +956,12 @@ TEST(with_dropin) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-4a.service"));
-        assert_se(streq(changes[1].source, "/usr/lib/systemd/system/with-dropin-4b.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-4a.service");
+        ASSERT_STREQ(changes[1].source, "/usr/lib/systemd/system/with-dropin-4b.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-4a.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-4b.service");
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -1004,12 +1023,12 @@ TEST(with_dropin_template) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-1@.service"));
-        assert_se(streq(changes[1].source, "/usr/lib/systemd/system/with-dropin-1@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-1@.service");
+        ASSERT_STREQ(changes[1].source, "/usr/lib/systemd/system/with-dropin-1@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-1@instance-1.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/graphical.target.wants/with-dropin-1@instance-1.service");
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -1017,30 +1036,30 @@ TEST(with_dropin_template) {
         assert_se(n_changes == 2);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         assert_se(changes[1].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-2@.service"));
-        assert_se(streq(changes[1].source, "/usr/lib/systemd/system/with-dropin-2@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-2@.service");
+        ASSERT_STREQ(changes[1].source, "/usr/lib/systemd/system/with-dropin-2@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-2@instance-1.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/graphical.target.wants/with-dropin-2@instance-1.service");
-        assert_se(streq(changes[1].path, p));
+        ASSERT_STREQ(changes[1].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("with-dropin-2@instance-2.service"), &changes, &n_changes) == 1);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-2@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-2@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-2@instance-2.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
         assert_se(unit_file_enable(RUNTIME_SCOPE_SYSTEM, 0, root, STRV_MAKE("with-dropin-3@.service"), &changes, &n_changes) == 1);
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
-        assert_se(streq(changes[0].source, "/usr/lib/systemd/system/with-dropin-3@.service"));
+        ASSERT_STREQ(changes[0].source, "/usr/lib/systemd/system/with-dropin-3@.service");
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/with-dropin-3@instance-2.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -1080,7 +1099,7 @@ TEST(preset_multiple_instances) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_SYMLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/foo@bar0.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -1088,7 +1107,7 @@ TEST(preset_multiple_instances) {
         assert_se(n_changes == 1);
         assert_se(changes[0].type == INSTALL_CHANGE_UNLINK);
         p = strjoina(root, SYSTEM_CONFIG_UNIT_DIR"/multi-user.target.wants/foo@bar0.service");
-        assert_se(streq(changes[0].path, p));
+        ASSERT_STREQ(changes[0].path, p);
         install_changes_free(changes, n_changes);
         changes = NULL; n_changes = 0;
 
@@ -1131,7 +1150,7 @@ static void verify_one(
          * RequiredBy= settings, and less so for Alias=. The only case where it should happen is when we have
          * an Alias=alias@.service an instantiated template template@instance. In that case the instance name
          * should be propagated into the alias as alias@instance. */
-        assert_se(streq_ptr(alias2, updated_name));
+        ASSERT_STREQ(alias2, updated_name);
 }
 
 TEST(verify_alias) {

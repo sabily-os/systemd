@@ -74,9 +74,9 @@ static void test_done(const char *t) {
 }
 
 static void append_number(JournalFile *f, int n, const sd_id128_t *boot_id, uint64_t *seqnum, uint64_t *ret_offset) {
-        _cleanup_free_ char *p = NULL, *q = NULL;
+        _cleanup_free_ char *p = NULL, *q = NULL, *s = NULL;
         dual_timestamp ts;
-        struct iovec iovec[2];
+        struct iovec iovec[3];
         size_t n_iov = 0;
 
         dual_timestamp_now(&ts);
@@ -91,6 +91,9 @@ static void append_number(JournalFile *f, int n, const sd_id128_t *boot_id, uint
 
         assert_se(asprintf(&p, "NUMBER=%d", n) >= 0);
         iovec[n_iov++] = IOVEC_MAKE_STRING(p);
+
+        assert_se(s = strjoin("LESS_THAN_FIVE=%d", yes_no(n < 5)));
+        iovec[n_iov++] = IOVEC_MAKE_STRING(s);
 
         if (boot_id) {
                 assert_se(q = strjoin("_BOOT_ID=", SD_ID128_TO_STRING(*boot_id)));
@@ -250,6 +253,37 @@ static void mkdtemp_chdir_chattr(char *path) {
         (void) chattr_path(path, FS_NOCOW_FL, FS_NOCOW_FL, NULL);
 }
 
+static void test_cursor(sd_journal *j) {
+        _cleanup_strv_free_ char **cursors = NULL;
+        int r;
+
+        assert_se(sd_journal_seek_head(j) >= 0);
+
+        for (;;) {
+                r = sd_journal_next(j);
+                assert_se(r >= 0);
+                if (r == 0)
+                        break;
+
+                _cleanup_free_ char *cursor = NULL;
+                assert_se(sd_journal_get_cursor(j, &cursor) >= 0);
+                assert_se(sd_journal_test_cursor(j, cursor) > 0);
+                assert_se(strv_consume(&cursors, TAKE_PTR(cursor)) >= 0);
+        }
+
+        STRV_FOREACH(c, cursors) {
+                assert_se(sd_journal_seek_cursor(j, *c) >= 0);
+                assert_se(sd_journal_next(j) >= 0);
+                assert_se(sd_journal_test_cursor(j, *c) > 0);
+        }
+
+        assert_se(sd_journal_seek_head(j) >= 0);
+        STRV_FOREACH(c, cursors) {
+                assert_se(sd_journal_next(j) >= 0);
+                assert_se(sd_journal_test_cursor(j, *c) > 0);
+        }
+}
+
 static void test_skip_one(void (*setup)(void)) {
         char t[] = "/var/tmp/journal-skip-XXXXXX";
         sd_journal *j;
@@ -391,6 +425,30 @@ static void test_skip_one(void (*setup)(void)) {
         test_check_numbers_up(j, 9);
         sd_journal_close(j);
 
+        /* For issue #31516. */
+        assert_ret(sd_journal_open_directory(&j, t, SD_JOURNAL_ASSUME_IMMUTABLE));
+        test_cursor(j);
+        sd_journal_flush_matches(j);
+        assert_se(sd_journal_add_match(j, "LESS_THAN_FIVE=yes", SIZE_MAX) >= 0);
+        test_cursor(j);
+        sd_journal_flush_matches(j);
+        assert_se(sd_journal_add_match(j, "LESS_THAN_FIVE=no", SIZE_MAX) >= 0);
+        test_cursor(j);
+        sd_journal_flush_matches(j);
+        assert_se(sd_journal_add_match(j, "LESS_THAN_FIVE=hoge", SIZE_MAX) >= 0);
+        test_cursor(j);
+        sd_journal_flush_matches(j);
+        assert_se(sd_journal_add_match(j, "LESS_THAN_FIVE=yes", SIZE_MAX) >= 0);
+        assert_se(sd_journal_add_match(j, "NUMBER=3", SIZE_MAX) >= 0);
+        test_cursor(j);
+        sd_journal_flush_matches(j);
+        assert_se(sd_journal_add_match(j, "LESS_THAN_FIVE=yes", SIZE_MAX) >= 0);
+        assert_se(sd_journal_add_match(j, "NUMBER=3", SIZE_MAX) >= 0);
+        assert_se(sd_journal_add_match(j, "NUMBER=4", SIZE_MAX) >= 0);
+        assert_se(sd_journal_add_match(j, "NUMBER=5", SIZE_MAX) >= 0);
+        assert_se(sd_journal_add_match(j, "NUMBER=6", SIZE_MAX) >= 0);
+        test_cursor(j);
+
         test_done(t);
 }
 
@@ -401,7 +459,7 @@ TEST(skip) {
 
 static void test_boot_id_one(void (*setup)(void), size_t n_boots_expected) {
         char t[] = "/var/tmp/journal-boot-id-XXXXXX";
-        sd_journal *j;
+        _cleanup_(sd_journal_closep) sd_journal *j = NULL;
         _cleanup_free_ BootId *boots = NULL;
         size_t n_boots;
 
@@ -410,27 +468,58 @@ static void test_boot_id_one(void (*setup)(void), size_t n_boots_expected) {
         setup();
 
         assert_ret(sd_journal_open_directory(&j, t, SD_JOURNAL_ASSUME_IMMUTABLE));
-        assert_se(journal_get_boots(j, &boots, &n_boots) >= 0);
+        assert_se(journal_get_boots(
+                                j,
+                                /* advance_older = */ false, /* max_ids = */ SIZE_MAX,
+                                &boots, &n_boots) >= 0);
         assert_se(boots);
         assert_se(n_boots == n_boots_expected);
-        sd_journal_close(j);
 
-        FOREACH_ARRAY(b, boots, n_boots) {
-                assert_ret(sd_journal_open_directory(&j, t, SD_JOURNAL_ASSUME_IMMUTABLE));
-                assert_se(journal_find_boot_by_id(j, b->id) == 1);
-                sd_journal_close(j);
-        }
-
-        for (int i = - (int) n_boots + 1; i <= (int) n_boots; i++) {
+        for (size_t i = 0; i < n_boots; i++) {
                 sd_id128_t id;
 
-                assert_ret(sd_journal_open_directory(&j, t, SD_JOURNAL_ASSUME_IMMUTABLE));
-                assert_se(journal_find_boot_by_offset(j, i, &id) == 1);
-                if (i <= 0)
-                        assert_se(sd_id128_equal(id, boots[n_boots + i - 1].id));
-                else
-                        assert_se(sd_id128_equal(id, boots[i - 1].id));
-                sd_journal_close(j);
+                /* positive offset */
+                assert_se(journal_find_boot(j, SD_ID128_NULL, (int) (i + 1), &id) == 1);
+                assert_se(sd_id128_equal(id, boots[i].id));
+
+                /* negative offset */
+                assert_se(journal_find_boot(j, SD_ID128_NULL, (int) (i + 1) - (int) n_boots, &id) == 1);
+                assert_se(sd_id128_equal(id, boots[i].id));
+
+                for (size_t k = 0; k < n_boots; k++) {
+                        int offset = (int) k - (int) i;
+
+                        /* relative offset */
+                        assert_se(journal_find_boot(j, boots[i].id, offset, &id) == 1);
+                        assert_se(sd_id128_equal(id, boots[k].id));
+                }
+        }
+
+        for (size_t i = 0; i <= n_boots_expected + 1; i++) {
+                _cleanup_free_ BootId *boots_limited = NULL;
+                size_t n_boots_limited;
+
+                assert_se(journal_get_boots(
+                                        j,
+                                        /* advance_older = */ false, /* max_ids = */ i,
+                                        &boots_limited, &n_boots_limited) >= 0);
+                assert_se(boots_limited || i == 0);
+                assert_se(n_boots_limited == MIN(i, n_boots_expected));
+                assert_se(memcmp_safe(boots, boots_limited, n_boots_limited * sizeof(BootId)) == 0);
+        }
+
+        for (size_t i = 0; i <= n_boots_expected + 1; i++) {
+                _cleanup_free_ BootId *boots_limited = NULL;
+                size_t n_boots_limited;
+
+                assert_se(journal_get_boots(
+                                        j,
+                                        /* advance_older = */ true, /* max_ids = */ i,
+                                        &boots_limited, &n_boots_limited) >= 0);
+                assert_se(boots_limited || i == 0);
+                assert_se(n_boots_limited == MIN(i, n_boots_expected));
+                for (size_t k = 0; k < n_boots_limited; k++)
+                        assert_se(memcmp(&boots[n_boots - k - 1], &boots_limited[k], sizeof(BootId)) == 0);
         }
 
         test_done(t);

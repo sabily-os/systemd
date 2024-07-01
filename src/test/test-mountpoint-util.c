@@ -33,7 +33,7 @@ static void test_mount_propagation_flag_one(const char *name, int ret, unsigned 
                 if (isempty(name))
                         assert_se(isempty(c));
                 else
-                        assert_se(streq(c, name));
+                        ASSERT_STREQ(c, name);
         }
 }
 
@@ -354,9 +354,9 @@ TEST(fstype_can_discard) {
 }
 
 TEST(fstype_can_norecovery) {
-        assert_se(fstype_can_norecovery("ext4"));
-        assert_se(!fstype_can_norecovery("vfat"));
-        assert_se(!fstype_can_norecovery("tmpfs"));
+        ASSERT_STREQ(fstype_norecovery_option("ext4"), "norecovery");
+        ASSERT_NULL(fstype_norecovery_option("vfat"));
+        ASSERT_NULL(fstype_norecovery_option("tmpfs"));
 }
 
 TEST(fstype_can_umask) {

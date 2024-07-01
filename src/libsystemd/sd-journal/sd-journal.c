@@ -233,7 +233,11 @@ _public_ int sd_journal_add_match(sd_journal *j, const void *data, size_t size) 
         assert_return(!journal_origin_changed(j), -ECHILD);
         assert_return(data, -EINVAL);
 
-        if (size == 0)
+        /* If the size is unspecified, assume it's a string. Note: 0 is the public value we document for
+         * this, for historical reasons. Internally, we pretty widely started using SIZE_MAX for this in
+         * similar cases however, hence accept that too. And internally we actually prefer it, to make things
+         * less surprising. */
+        if (IN_SET(size, 0, SIZE_MAX))
                 size = strlen(data);
 
         if (!match_is_valid(data, size))
@@ -336,7 +340,7 @@ int journal_add_match_pair(sd_journal *j, const char *field, const char *value) 
         if (!s)
                 return -ENOMEM;
 
-        return sd_journal_add_match(j, s, 0);
+        return sd_journal_add_match(j, s, SIZE_MAX);
 }
 
 int journal_add_matchf(sd_journal *j, const char *format, ...) {
@@ -353,7 +357,7 @@ int journal_add_matchf(sd_journal *j, const char *format, ...) {
         if (r < 0)
                 return -ENOMEM;
 
-        return sd_journal_add_match(j, s, 0);
+        return sd_journal_add_match(j, s, SIZE_MAX);
 }
 
 _public_ int sd_journal_add_conjunction(sd_journal *j) {
@@ -427,7 +431,7 @@ static char *match_make_string(Match *m) {
         return TAKE_PTR(p);
 }
 
-char *journal_make_match_string(sd_journal *j) {
+char* journal_make_match_string(sd_journal *j) {
         assert(j);
 
         return match_make_string(j->level0);
@@ -1969,7 +1973,7 @@ static void directory_watch(sd_journal *j, Directory *m, int fd, uint32_t mask) 
 
         m->wd = inotify_add_watch_fd(j->inotify_fd, fd, mask);
         if (m->wd < 0) {
-                log_debug_errno(errno, "Failed to watch journal directory '%s', ignoring: %m", m->path);
+                log_debug_errno(m->wd, "Failed to watch journal directory '%s', ignoring: %m", m->path);
                 return;
         }
 
@@ -2652,9 +2656,7 @@ _public_ int sd_journal_get_monotonic_usec(sd_journal *j, uint64_t *ret, sd_id12
         if (r < 0)
                 return r;
 
-        if (ret_boot_id)
-                *ret_boot_id = o->entry.boot_id;
-        else {
+        if (!ret_boot_id) {
                 sd_id128_t id;
 
                 r = sd_id128_get_boot(&id);
@@ -2671,6 +2673,8 @@ _public_ int sd_journal_get_monotonic_usec(sd_journal *j, uint64_t *ret, sd_id12
 
         if (ret)
                 *ret = t;
+        if (ret_boot_id)
+                *ret_boot_id = o->entry.boot_id;
 
         return 0;
 }

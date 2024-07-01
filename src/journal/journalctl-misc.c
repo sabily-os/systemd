@@ -111,11 +111,16 @@ int action_list_boots(void) {
         if (r < 0)
                 return r;
 
-        r = journal_get_boots(j, &boots, &n_boots);
+        r = journal_get_boots(
+                        j,
+                        /* advance_older = */ arg_lines_needs_seek_end(),
+                        /* max_ids = */ arg_lines >= 0 ? (size_t) arg_lines : SIZE_MAX,
+                        &boots, &n_boots);
         if (r < 0)
                 return log_error_errno(r, "Failed to determine boots: %m");
         if (r == 0)
-                return 0;
+                return log_full_errno(arg_quiet ? LOG_DEBUG : LOG_ERR, SYNTHETIC_ERRNO(ENODATA),
+                                      "No boot found.");
 
         table = table_new("idx", "boot id", "first entry", "last entry");
         if (!table)
@@ -131,13 +136,25 @@ int action_list_boots(void) {
         (void) table_set_sort(table, (size_t) 0);
         (void) table_set_reverse(table, 0, arg_reverse);
 
-        FOREACH_ARRAY(i, boots, n_boots) {
+        for (int i = 0; i < (int) n_boots; i++) {
+                int index;
+
+                if (arg_lines_needs_seek_end())
+                        /* With --lines=N, we only know the negative index, and the older ID is located earlier. */
+                        index = -i;
+                else if (arg_lines >= 0)
+                        /* With --lines=+N, we only know the positive index, and the newer ID is located earlier. */
+                        index = i + 1;
+                else
+                        /* Otherwise, show negative index. Note, in this case, newer ID is located earlier. */
+                        index = i + 1 - (int) n_boots;
+
                 r = table_add_many(table,
-                                   TABLE_INT, (int)(i - boots) - (int) n_boots + 1,
+                                   TABLE_INT, index,
                                    TABLE_SET_ALIGN_PERCENT, 100,
-                                   TABLE_ID128, i->id,
-                                   TABLE_TIMESTAMP, i->first_usec,
-                                   TABLE_TIMESTAMP, i->last_usec);
+                                   TABLE_ID128, boots[i].id,
+                                   TABLE_TIMESTAMP, boots[i].first_usec,
+                                   TABLE_TIMESTAMP, boots[i].last_usec);
                 if (r < 0)
                         return table_log_add_error(r);
         }
@@ -211,7 +228,6 @@ int action_list_field_names(void) {
 int action_list_namespaces(void) {
         _cleanup_(table_unrefp) Table *table = NULL;
         sd_id128_t machine;
-        char machine_id[SD_ID128_STRING_MAX];
         int r;
 
         assert(arg_action == ACTION_LIST_NAMESPACES);
@@ -219,8 +235,6 @@ int action_list_namespaces(void) {
         r = sd_id128_get_machine(&machine);
         if (r < 0)
                 return log_error_errno(r, "Failed to get machine ID: %m");
-
-        sd_id128_to_string(machine, machine_id);
 
         table = table_new("namespace");
         if (!table)
@@ -243,27 +257,42 @@ int action_list_namespaces(void) {
                 }
 
                 FOREACH_DIRENT(de, dirp, return log_error_errno(errno, "Failed to iterate through %s: %m", path)) {
-                        char *dot;
 
-                        if (!startswith(de->d_name, machine_id))
+                        const char *e = strchr(de->d_name, '.');
+                        if (!e)
                                 continue;
 
-                        dot = strchr(de->d_name, '.');
-                        if (!dot)
+                        _cleanup_free_ char *ids = strndup(de->d_name, e - de->d_name);
+                        if (!ids)
+                                return log_oom();
+
+                        sd_id128_t id;
+                        r = sd_id128_from_string(ids, &id);
+                        if (r < 0)
                                 continue;
 
-                        if (!log_namespace_name_valid(dot + 1))
+                        if (!sd_id128_equal(machine, id))
                                 continue;
 
-                        r = table_add_cell(table, NULL, TABLE_STRING, dot + 1);
+                        e++;
+
+                        if (!log_namespace_name_valid(e))
+                                continue;
+
+                        r = table_add_cell(table, NULL, TABLE_STRING, e);
                         if (r < 0)
                                 return table_log_add_error(r);
                 }
         }
 
-        r = table_print_with_pager(table, arg_json_format_flags, arg_pager_flags, !arg_quiet);
-        if (r < 0)
-                return table_log_print_error(r);
+        if (table_isempty(table) && FLAGS_SET(arg_json_format_flags, SD_JSON_FORMAT_OFF)) {
+                if (!arg_quiet)
+                        log_notice("No namespaces found.");
+        } else {
+                r = table_print_with_pager(table, arg_json_format_flags, arg_pager_flags, !arg_quiet);
+                if (r < 0)
+                        return r;
+        }
 
         return 0;
 }

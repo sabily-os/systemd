@@ -271,7 +271,7 @@ int sd_dhcp_server_set_boot_server_name(sd_dhcp_server *server, const char *name
 int sd_dhcp_server_set_boot_filename(sd_dhcp_server *server, const char *filename) {
         assert_return(server, -EINVAL);
 
-        if (filename && (!string_is_safe(filename) || !ascii_is_valid(filename)))
+        if (filename && !string_is_safe_ascii(filename))
                 return -EINVAL;
 
         return free_and_strdup(&server->boot_filename, filename);
@@ -1252,7 +1252,7 @@ static int server_receive_message(sd_event_source *s, int fd,
                 /* Preallocate the additional size for DHCP Relay Agent Information Option if needed */
                 buflen += relay_agent_information_length(server->agent_circuit_id, server->agent_remote_id) + 2;
 
-        message = malloc(buflen);
+        message = malloc0(buflen);
         if (!message)
                 return -ENOMEM;
 
@@ -1592,6 +1592,7 @@ int sd_dhcp_server_set_lease_file(sd_dhcp_server *server, int dir_fd, const char
         int r;
 
         assert_return(server, -EINVAL);
+        assert_return(!path || (dir_fd >= 0 || dir_fd == AT_FDCWD), -EBADF);
         assert_return(!sd_dhcp_server_is_running(server), -EBUSY);
 
         if (!path) {
@@ -1604,11 +1605,7 @@ int sd_dhcp_server_set_lease_file(sd_dhcp_server *server, int dir_fd, const char
         if (!path_is_safe(path))
                 return -EINVAL;
 
-        if (dir_fd < 0 && dir_fd != AT_FDCWD)
-                return -EBADF;
-
-        _cleanup_close_ int fd = -EBADF;
-        fd = fd_reopen(dir_fd, O_CLOEXEC | O_DIRECTORY | O_PATH);
+        _cleanup_close_ int fd = fd_reopen(dir_fd, O_CLOEXEC | O_DIRECTORY | O_PATH);
         if (fd < 0)
                 return fd;
 
@@ -1616,6 +1613,7 @@ int sd_dhcp_server_set_lease_file(sd_dhcp_server *server, int dir_fd, const char
         if (r < 0)
                 return r;
 
-        server->lease_dir_fd = TAKE_FD(fd);
+        close_and_replace(server->lease_dir_fd, fd);
+
         return 0;
 }

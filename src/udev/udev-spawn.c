@@ -234,7 +234,8 @@ int udev_event_spawn(
             !STARTSWITH_SET(cmd, "ata_id", "cdrom_id", "dmi_memory_id", "fido_id", "mtd_probe", "scsi_id")) {
                 log_device_debug(event->dev, "Running in test mode, skipping execution of '%s'.", cmd);
                 result[0] = '\0';
-                ret_truncated = false;
+                if (ret_truncated)
+                        *ret_truncated = false;
                 return 0;
         }
 
@@ -348,13 +349,12 @@ void udev_event_execute_run(UdevEvent *event) {
                                 log_device_debug_errno(event->dev, r, "Failed to run built-in command \"%s\", ignoring: %m", command);
                 } else {
                         if (event->worker && event->worker->exec_delay_usec > 0) {
-                                usec_t timeout_usec = event->worker ? event->worker->timeout_usec : DEFAULT_WORKER_TIMEOUT_USEC;
                                 usec_t now_usec = now(CLOCK_MONOTONIC);
                                 usec_t age_usec = usec_sub_unsigned(now_usec, event->birth_usec);
 
-                                if (event->worker->exec_delay_usec >= usec_sub_unsigned(timeout_usec, age_usec)) {
+                                if (event->worker->exec_delay_usec >= usec_sub_unsigned(event->worker->timeout_usec, age_usec)) {
                                         log_device_warning(event->dev,
-                                                           "Cannot delaying execution of \"%s\" for %s, skipping.",
+                                                           "Cannot delay execution of \"%s\" for %s, skipping.",
                                                            command, FORMAT_TIMESPAN(event->worker->exec_delay_usec, USEC_PER_SEC));
                                         continue;
                                 }

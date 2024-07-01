@@ -11,9 +11,9 @@ int verb_srk(int argc, char *argv[], void *userdata) {
         _cleanup_(Esys_Freep) TPM2B_PUBLIC *public = NULL;
         int r;
 
-        r = tpm2_context_new(/* device= */ NULL, &c);
+        r = tpm2_context_new_or_warn(/* device= */ NULL, &c);
         if (r < 0)
-                return log_error_errno(r, "Failed to create TPM2 context: %m");
+                return r;
 
         r = tpm2_get_srk(
                         c,
@@ -38,7 +38,7 @@ int verb_srk(int argc, char *argv[], void *userdata) {
                                        "Refusing to write binary data to TTY, please redirect output to file.");
 
         if (fwrite(marshalled, 1, marshalled_size, stdout) != marshalled_size)
-                return log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to write SRK to stdout: %m");
+                return log_error_errno(SYNTHETIC_ERRNO(EIO), "Failed to write SRK to stdout.");
 
         r = fflush_and_check(stdout);
         if (r < 0)

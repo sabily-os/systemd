@@ -12,9 +12,10 @@
  * When the code here is changed, man/systemd.net-naming-scheme.xml must be updated too.
  */
 
+/* Make sure the net/if.h header is included before any linux/ one */
+#include <net/if.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <net/if.h>
 #include <stdarg.h>
 #include <unistd.h>
 #include <linux/if.h>
@@ -813,7 +814,7 @@ static int names_devicetree(sd_device *dev, const char *prefix, EventMode mode) 
         ofnode_path = path_startswith(ofnode_syspath, devicetree_syspath);
         if (!ofnode_path)
                 return log_device_debug_errno(ofnode_dev, SYNTHETIC_ERRNO(EINVAL),
-                                              "The device '%s' is not a child device of '%s': %m",
+                                              "The device '%s' is not a child device of '%s'.",
                                               ofnode_syspath, devicetree_syspath);
 
         /* Get back our leading / to match the contents of the aliases */
@@ -854,7 +855,7 @@ static int names_devicetree(sd_device *dev, const char *prefix, EventMode mode) 
                 /* ...but make sure we don't have an alias conflict */
                 if (i == 0 && device_get_sysattr_value_filtered(aliases_dev, conflict, NULL) >= 0)
                         return log_device_debug_errno(dev, SYNTHETIC_ERRNO(EEXIST),
-                                        "Ethernet alias conflict: ethernet and ethernet0 both exist");
+                                        "Ethernet alias conflict: ethernet and ethernet0 both exist.");
 
                 char str[ALTIFNAMSIZ];
                 if (snprintf_ok(str, sizeof str, "%sd%u", prefix, i))
@@ -1231,7 +1232,7 @@ static int names_xen(sd_device *dev, const char *prefix, EventMode mode) {
 
         p = startswith(vif, "vif-");
         if (!p)
-                return log_device_debug_errno(dev, SYNTHETIC_ERRNO(EINVAL), "Invalid vif name: %s: %m", vif);
+                return log_device_debug_errno(dev, SYNTHETIC_ERRNO(EINVAL), "Invalid vif name: %s.", vif);
 
         r = safe_atou_full(p, SAFE_ATO_REFUSE_PLUS_MINUS | SAFE_ATO_REFUSE_LEADING_ZERO |
                            SAFE_ATO_REFUSE_LEADING_WHITESPACE | 10, &id);

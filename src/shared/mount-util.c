@@ -79,7 +79,9 @@ int umount_recursive_full(const char *prefix, int flags, char **keep) {
                                 continue;
 
                         if (prefix && !path_startswith(path, prefix)) {
-                                log_trace("Not unmounting %s, outside of prefix: %s", path, prefix);
+                                // FIXME: This is extremely noisy, we're probably doing something very wrong
+                                // to trigger this so often, needs more investigation.
+                                // log_trace("Not unmounting %s, outside of prefix: %s", path, prefix);
                                 continue;
                         }
 
@@ -939,6 +941,7 @@ static int mount_in_namespace_legacy(
                                 /* required_host_os_release_sysext_level= */ NULL,
                                 /* required_host_os_release_confext_level= */ NULL,
                                 /* required_sysext_scope= */ NULL,
+                                /* verity= */ NULL,
                                 /* ret_image= */ NULL);
         else
                 r = mount_follow_verbose(LOG_DEBUG, FORMAT_PROC_FD_PATH(chased_src_fd), mount_tmp, NULL, MS_BIND, NULL);
@@ -1164,6 +1167,7 @@ static int mount_in_namespace(
                                 /* required_host_os_release_sysext_level= */ NULL,
                                 /* required_host_os_release_confext_level= */ NULL,
                                 /* required_sysext_scope= */ NULL,
+                                /* verity= */ NULL,
                                 &img);
                 if (r < 0)
                         return log_debug_errno(
@@ -1394,7 +1398,7 @@ int remount_idmap_fd(
 
         assert(userns_fd >= 0);
 
-        /* This remounts all specified paths with the specified userns as idmap. It will do so in in the
+        /* This remounts all specified paths with the specified userns as idmap. It will do so in the
          * order specified in the strv: the expectation is that the top-level directories are at the
          * beginning, and nested directories in the right, so that the tree can be built correctly from left
          * to right. */
@@ -1810,4 +1814,14 @@ int make_fsmount(
                                       type);
 
         return TAKE_FD(mnt_fd);
+}
+
+char* umount_and_unlink_and_free(char *p) {
+        if (!p)
+                return NULL;
+
+        PROTECT_ERRNO;
+        (void) umount2(p, 0);
+        (void) unlink(p);
+        return mfree(p);
 }

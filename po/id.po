@@ -5,17 +5,17 @@
 msgid ""
 msgstr ""
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-03-04 10:09+0100\n"
-"PO-Revision-Date: 2024-01-21 10:36+0000\n"
+"POT-Creation-Date: 2024-06-01 15:13+0900\n"
+"PO-Revision-Date: 2024-05-21 11:35+0000\n"
 "Last-Translator: Andika Triwidada <andika@gmail.com>\n"
 "Language-Team: Indonesian <https://translate.fedoraproject.org/projects/"
-"systemd/master/id/>\n"
+"systemd/main/id/>\n"
 "Language: id\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
-"X-Generator: Weblate 5.3.1\n"
+"X-Generator: Weblate 5.5.5\n"
 
 #: src/core/org.freedesktop.systemd1.policy.in:22
 msgid "Send passphrase back to system"
@@ -131,24 +131,12 @@ msgstr ""
 "pengguna."
 
 #: src/home/org.freedesktop.home1.policy:73
-msgid "Inhibit automatic lock of a home area"
-msgstr ""
+msgid "Activate a home area"
+msgstr "Aktifkan suatu area home"
 
 #: src/home/org.freedesktop.home1.policy:74
-#, fuzzy
-msgid ""
-"Authentication is required to inhibit automatic lock of a user's home area."
-msgstr "Otentikasi diperlukan untuk memperbarui suatu area rumah pengguna."
-
-#: src/home/org.freedesktop.home1.policy:83
-#, fuzzy
-msgid "Activate a home area"
-msgstr "Menciptakan suatu area rumah"
-
-#: src/home/org.freedesktop.home1.policy:84
-#, fuzzy
 msgid "Authentication is required to activate a user's home area."
-msgstr "Otentikasi diperlukan untuk mencipta suatu area rumah pengguna."
+msgstr "Otentikasi diperlukan untuk mengaktifkan suatu area home pengguna."
 
 #: src/home/pam_systemd_home.c:293
 #, c-format
@@ -280,40 +268,40 @@ msgstr ""
 msgid "Too many unsuccessful login attempts for user %s, refusing."
 msgstr "Terlalu banyak upaya log masuk yang gagal bagi pengguna %s, menolak."
 
-#: src/home/pam_systemd_home.c:956
+#: src/home/pam_systemd_home.c:964
 msgid "User record is blocked, prohibiting access."
 msgstr "Rekaman pengguna terblokir, menolak akses."
 
-#: src/home/pam_systemd_home.c:960
+#: src/home/pam_systemd_home.c:968
 msgid "User record is not valid yet, prohibiting access."
 msgstr "Rekaman pengguna belum valid, menolak akses."
 
-#: src/home/pam_systemd_home.c:964
+#: src/home/pam_systemd_home.c:972
 msgid "User record is not valid anymore, prohibiting access."
 msgstr "Rekaman pengguna tidak valid lagi, menolak akses."
 
-#: src/home/pam_systemd_home.c:969 src/home/pam_systemd_home.c:1020
+#: src/home/pam_systemd_home.c:977 src/home/pam_systemd_home.c:1028
 msgid "User record not valid, prohibiting access."
 msgstr "Rekaman pengguna tidak valid, menolak akses."
 
-#: src/home/pam_systemd_home.c:981
+#: src/home/pam_systemd_home.c:989
 #, c-format
 msgid "Too many logins, try again in %s."
 msgstr "Terlalu banyak log masuk, coba lagi dalam %s."
 
-#: src/home/pam_systemd_home.c:992
+#: src/home/pam_systemd_home.c:1000
 msgid "Password change required."
 msgstr "Perubahan kata sandi diperlukan."
 
-#: src/home/pam_systemd_home.c:996
+#: src/home/pam_systemd_home.c:1004
 msgid "Password expired, change required."
 msgstr "Kata sandi kedaluwarsa, perubahan diperlukan."
 
-#: src/home/pam_systemd_home.c:1002
+#: src/home/pam_systemd_home.c:1010
 msgid "Password is expired, but can't change, refusing login."
 msgstr "Kata sandi kedaluwarsa, tapi tidak bisa mengubah, menolak log masuk."
 
-#: src/home/pam_systemd_home.c:1006
+#: src/home/pam_systemd_home.c:1014
 msgid "Password will expire soon, please change."
 msgstr "Kata sandi akan segera kedaluwarsan, harap diubah."
 
@@ -370,46 +358,39 @@ msgid "Authentication is required to get system description."
 msgstr "Otentikasi diperlukan untuk mendapatkan deskripsi sistem."
 
 #: src/import/org.freedesktop.import1.policy:22
-#, fuzzy
 msgid "Import a disk image"
-msgstr "Impor sebuah image kontainer atau VM"
+msgstr "Impor sebuah image disk"
 
 #: src/import/org.freedesktop.import1.policy:23
-#, fuzzy
 msgid "Authentication is required to import an image"
-msgstr "Otentikasi diperlukan untuk mengimpor suatu image kontainer atau VM"
+msgstr "Otentikasi diperlukan untuk mengimpor suatu image"
 
 #: src/import/org.freedesktop.import1.policy:32
-#, fuzzy
 msgid "Export a disk image"
-msgstr "Ekspor sebuah image kontainer atau VM"
+msgstr "Ekspor sebuah image disk"
 
 #: src/import/org.freedesktop.import1.policy:33
-#, fuzzy
 msgid "Authentication is required to export disk image"
-msgstr "Otentikasi diperlukan untuk mengekspor suatu image kontainer atau VM"
+msgstr "Otentikasi diperlukan untuk mengekspor suatu image disk"
 
 #: src/import/org.freedesktop.import1.policy:42
-#, fuzzy
 msgid "Download a disk image"
-msgstr "Unduh sebuah image kontainer atau VM"
+msgstr "Unduh sebuah image disk"
 
 #: src/import/org.freedesktop.import1.policy:43
-#, fuzzy
 msgid "Authentication is required to download a disk image"
-msgstr "Otentikasi diperlukan untuk mengunduh suatu image kontainer atau VM"
+msgstr "Otentikasi diperlukan untuk mengunduh suatu image disk"
 
 #: src/import/org.freedesktop.import1.policy:52
 msgid "Cancel transfer of a disk image"
-msgstr ""
+msgstr "Batalkan transfer suatu image disk"
 
 #: src/import/org.freedesktop.import1.policy:53
-#, fuzzy
 msgid ""
 "Authentication is required to cancel the ongoing transfer of a disk image"
 msgstr ""
-"Otentikasi diperlukan untuk mengubah kata sandi dari suatu area rumah "
-"pengguna."
+"Otentikasi diperlukan untuk membatalkan transfer suatu image disk yang "
+"sedang berjalan"
 
 #: src/locale/org.freedesktop.locale1.policy:22
 msgid "Set system locale"
@@ -1020,6 +1001,22 @@ msgstr "Konfigurasi ulang antar muka jaringan"
 msgid "Authentication is required to reconfigure network interface."
 msgstr "Otentikasi diperlukan untuk mengonfigurasi ulang antar muka jaringan."
 
+#: src/network/org.freedesktop.network1.policy:187
+#, fuzzy
+#| msgid ""
+#| "Specify whether persistent storage for systemd-networkd is available."
+msgid "Specify whether persistent storage for systemd-networkd is available"
+msgstr ""
+"Menentukan apakah penyimpanan persisten bagi systemd-networkd tersedia."
+
+#: src/network/org.freedesktop.network1.policy:188
+msgid ""
+"Authentication is required to specify whether persistent storage for systemd-"
+"networkd is available."
+msgstr ""
+"Otentikasi diperlukan untuk menentukan apakah penyimpanan persisten bagi "
+"systemd-networkd tersedia."
+
 #: src/portable/org.freedesktop.portable1.policy:13
 msgid "Inspect a portable service image"
 msgstr "Memeriksa suatu image layanan portabel"
@@ -1155,7 +1152,7 @@ msgstr ""
 "Otentikasi diperlukan untuk menghapus berkas dan direktori yang terkait "
 "dengan '$(unit)'."
 
-#: src/core/dbus-unit.c:743
+#: src/core/dbus-unit.c:741
 msgid ""
 "Authentication is required to freeze or thaw the processes of '$(unit)' unit."
 msgstr ""

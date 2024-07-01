@@ -568,7 +568,7 @@ static int persistent_storage_open(void) {
         if (r <= 0)
                 return -EBADF;
 
-        fd = open("/var/lib/systemd/network/", O_CLOEXEC | O_DIRECTORY | O_PATH);
+        fd = open("/var/lib/systemd/network/", O_CLOEXEC | O_DIRECTORY);
         if (fd < 0)
                 return log_debug_errno(errno, "Failed to open /var/lib/systemd/network/, ignoring: %m");
 
@@ -599,6 +599,9 @@ int manager_new(Manager **ret, bool test_mode) {
                 .manage_foreign_nexthops = true,
                 .ethtool_fd = -EBADF,
                 .persistent_storage_fd = persistent_storage_open(),
+                .dhcp_use_domains = _USE_DOMAINS_INVALID,
+                .dhcp6_use_domains = _USE_DOMAINS_INVALID,
+                .ndisc_use_domains = _USE_DOMAINS_INVALID,
                 .dhcp_duid.type = DUID_TYPE_EN,
                 .dhcp6_duid.type = DUID_TYPE_EN,
                 .duid_product_uuid.type = DUID_TYPE_UUID,

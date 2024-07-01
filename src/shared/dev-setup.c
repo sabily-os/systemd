@@ -22,7 +22,9 @@ int lock_dev_console(void) {
         _cleanup_close_ int fd = -EBADF;
         int r;
 
-        fd = open_terminal("/dev/console", O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+        /* NB: We do not use O_NOFOLLOW here, because some container managers might place a symlink to some
+         * pty in /dev/console, in which case it should be fine to lock the target TTY. */
+        fd = open_terminal("/dev/console", O_RDONLY|O_CLOEXEC|O_NOCTTY);
         if (fd < 0)
                 return fd;
 
@@ -110,7 +112,7 @@ int make_inaccessible_nodes(
         if (parent_fd < 0)
                 return -errno;
 
-        inaccessible_fd = open_mkdir_at(parent_fd, "inaccessible", O_CLOEXEC, 0755);
+        inaccessible_fd = open_mkdir_at_full(parent_fd, "inaccessible", O_CLOEXEC, XO_LABEL, 0755);
         if (inaccessible_fd < 0)
                 return inaccessible_fd;
 
@@ -119,7 +121,7 @@ int make_inaccessible_nodes(
          * to lock down these nodes as much as we can, but otherwise try to match them as closely as possible with the
          * underlying file, i.e. in the best case we offer the same node type as the underlying node. */
 
-        FOREACH_ARRAY(m, table, ELEMENTSOF(table)) {
+        FOREACH_ELEMENT(m, table) {
                 _cleanup_free_ char *path = NULL;
                 mode_t inode_type = *m;
                 const char *fn;
@@ -132,7 +134,7 @@ int make_inaccessible_nodes(
                 if (S_ISDIR(inode_type))
                         r = mkdirat_label(inaccessible_fd, fn, 0000);
                 else
-                        r = RET_NERRNO(mknodat(inaccessible_fd, fn, inode_type | 0000, makedev(0, 0)));
+                        r = mknodat_label(inaccessible_fd, fn, inode_type | 0000, makedev(0, 0));
                 if (r == -EEXIST) {
                         if (fchmodat(inaccessible_fd, fn, 0000, AT_SYMLINK_NOFOLLOW) < 0)
                                 log_debug_errno(errno, "Failed to adjust access mode of existing inode '%s', ignoring: %m", path);

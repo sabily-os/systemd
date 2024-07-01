@@ -392,6 +392,31 @@ static int property_get_scheduled_shutdown(
         return sd_bus_message_close_container(reply);
 }
 
+static int property_get_maintenance_time(
+                sd_bus *bus,
+                const char *path,
+                const char *interface,
+                const char *property,
+                sd_bus_message *reply,
+                void *userdata,
+                sd_bus_error *error) {
+
+        Manager *m = ASSERT_PTR(userdata);
+        _cleanup_free_ char *s = NULL;
+        int r;
+
+        assert(bus);
+        assert(reply);
+
+        if (m->maintenance_time) {
+                r = calendar_spec_to_string(m->maintenance_time, &s);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to format calendar specification: %m");
+        }
+
+        return sd_bus_message_append(reply, "s", s);
+}
+
 static BUS_DEFINE_PROPERTY_GET_ENUM(property_get_handle_action, handle_action, HandleAction);
 static BUS_DEFINE_PROPERTY_GET(property_get_docked, "b", Manager, manager_is_docked_or_external_displays);
 static BUS_DEFINE_PROPERTY_GET(property_get_lid_closed, "b", Manager, manager_is_lid_closed);
@@ -907,7 +932,10 @@ static int create_session(
         /* Check if we are already in a logind session, and if so refuse. */
         r = manager_get_session_by_pidref(m, &leader, /* ret_session= */ NULL);
         if (r < 0)
-                return r;
+                return log_debug_errno(
+                                r,
+                                "Failed to check if process " PID_FMT " is already in a session: %m",
+                                leader.pid);
         if (r > 0)
                 return sd_bus_error_setf(error, BUS_ERROR_SESSION_BUSY,
                                          "Already running in a session or user slice");
@@ -1169,7 +1197,7 @@ static int method_create_session_pidfd(sd_bus_message *message, void *userdata, 
 
 static int method_release_session(sd_bus_message *message, void *userdata, sd_bus_error *error) {
         Manager *m = ASSERT_PTR(userdata);
-        Session *session;
+        Session *session, *sender_session;
         const char *name;
         int r;
 
@@ -1182,6 +1210,14 @@ static int method_release_session(sd_bus_message *message, void *userdata, sd_bu
         r = manager_get_session_from_creds(m, message, name, error, &session);
         if (r < 0)
                 return r;
+
+        r = get_sender_session(m, message, /* consult_display= */ false, error, &sender_session);
+        if (r < 0)
+                return r;
+
+        if (session != sender_session)
+                return sd_bus_error_set(error, SD_BUS_ERROR_ACCESS_DENIED,
+                                        "Refused to release session, since it doesn't match the one of the client");
 
         r = session_release(session);
         if (r < 0)
@@ -2088,10 +2124,10 @@ static int method_do_shutdown_or_sleep(
                                                 "Both reboot via kexec and soft reboot selected, which is not supported");
 
                 if (action != HANDLE_REBOOT) {
-                        if (flags & SD_LOGIND_REBOOT_VIA_KEXEC)
+                        if (FLAGS_SET(flags, SD_LOGIND_REBOOT_VIA_KEXEC))
                                 return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS,
                                                         "Reboot via kexec option is only applicable with reboot operations");
-                        if ((flags & SD_LOGIND_SOFT_REBOOT) || (flags & SD_LOGIND_SOFT_REBOOT_IF_NEXTROOT_SET_UP))
+                        if (flags & (SD_LOGIND_SOFT_REBOOT|SD_LOGIND_SOFT_REBOOT_IF_NEXTROOT_SET_UP))
                                 return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS,
                                                         "Soft reboot option is only applicable with reboot operations");
                 }
@@ -2110,10 +2146,10 @@ static int method_do_shutdown_or_sleep(
 
         const HandleActionData *a = NULL;
 
-        if ((flags & SD_LOGIND_SOFT_REBOOT) ||
-            ((flags & SD_LOGIND_SOFT_REBOOT_IF_NEXTROOT_SET_UP) && path_is_os_tree("/run/nextroot") > 0))
+        if (FLAGS_SET(flags, SD_LOGIND_SOFT_REBOOT) ||
+            (FLAGS_SET(flags, SD_LOGIND_SOFT_REBOOT_IF_NEXTROOT_SET_UP) && path_is_os_tree("/run/nextroot") > 0))
                 a = handle_action_lookup(HANDLE_SOFT_REBOOT);
-        else if ((flags & SD_LOGIND_REBOOT_VIA_KEXEC) && kexec_loaded())
+        else if (FLAGS_SET(flags, SD_LOGIND_REBOOT_VIA_KEXEC) && kexec_loaded())
                 a = handle_action_lookup(HANDLE_KEXEC);
 
         if (action == HANDLE_SLEEP) {
@@ -2154,7 +2190,15 @@ static int method_do_shutdown_or_sleep(
 
                         case SLEEP_RESUME_NOT_SUPPORTED:
                                 return sd_bus_error_set(error, BUS_ERROR_SLEEP_VERB_NOT_SUPPORTED,
-                                                        "Not running on EFI and resume= is not set. No available method to resume from hibernation");
+                                                        "Not running on EFI and resume= is not set, or noresume is set. No available method to resume from hibernation");
+
+                        case SLEEP_RESUME_DEVICE_MISSING:
+                                return sd_bus_error_set(error, BUS_ERROR_SLEEP_VERB_NOT_SUPPORTED,
+                                                        "Specified resume device is missing or is not an active swap device");
+
+                        case SLEEP_RESUME_MISCONFIGURED:
+                                return sd_bus_error_set(error, BUS_ERROR_SLEEP_VERB_NOT_SUPPORTED,
+                                                        "Invalid resume config: resume= is not populated yet resume_offset= is");
 
                         case SLEEP_NOT_ENOUGH_SWAP_SPACE:
                                 return sd_bus_error_set(error, BUS_ERROR_SLEEP_VERB_NOT_SUPPORTED,
@@ -2312,6 +2356,8 @@ static void reset_scheduled_shutdown(Manager *m) {
         }
 
         (void) unlink(SHUTDOWN_SCHEDULE_FILE);
+
+        manager_send_changed(m, "ScheduledShutdown", NULL);
 }
 
 static int update_schedule_file(Manager *m) {
@@ -2546,6 +2592,25 @@ static int method_schedule_shutdown(sd_bus_message *message, void *userdata, sd_
         if (r != 0)
                 return r;
 
+        if (elapse == USEC_INFINITY) {
+                if (m->maintenance_time) {
+                        r = calendar_spec_next_usec(m->maintenance_time, now(CLOCK_REALTIME), &elapse);
+                        if (r < 0) {
+                                if (r == -ENOENT)
+                                        return sd_bus_error_set(error,
+                                                        BUS_ERROR_DESIGNATED_MAINTENANCE_TIME_NOT_SCHEDULED,
+                                                        "No upcoming maintenance window scheduled");
+                                return sd_bus_error_setf(error,
+                                                BUS_ERROR_DESIGNATED_MAINTENANCE_TIME_NOT_SCHEDULED,
+                                                "Failed to determine next maintenace window");
+                        }
+
+                        log_info("Scheduled %s at maintenance window %s", type, FORMAT_TIMESTAMP(elapse));
+                } else
+                        /* the good old shutdown command uses one minute by default */
+                        elapse = usec_add(now(CLOCK_REALTIME), USEC_PER_MINUTE);
+        }
+
         m->scheduled_shutdown_action = handle;
         m->shutdown_dry_run = dry_run;
         m->scheduled_shutdown_timeout = elapse;
@@ -2562,6 +2627,8 @@ static int method_schedule_shutdown(sd_bus_message *message, void *userdata, sd_
                 reset_scheduled_shutdown(m);
                 return r;
         }
+
+        manager_send_changed(m, "ScheduledShutdown", NULL);
 
         return sd_bus_reply_method_return(message, NULL);
 }
@@ -2843,6 +2910,9 @@ static int method_set_reboot_parameter(
         r = sd_bus_message_read(message, "s", &arg);
         if (r < 0)
                 return r;
+
+        if (!reboot_parameter_is_valid(arg))
+                return sd_bus_error_setf(error, SD_BUS_ERROR_INVALID_ARGS, "Invalid reboot parameter '%s'.", arg);
 
         r = detect_container();
         if (r < 0)
@@ -3629,12 +3699,14 @@ static const sd_bus_vtable manager_vtable[] = {
         SD_BUS_PROPERTY("HandleLidSwitch", "s", property_get_handle_action, offsetof(Manager, handle_lid_switch), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("HandleLidSwitchExternalPower", "s", property_get_handle_action, offsetof(Manager, handle_lid_switch_ep), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("HandleLidSwitchDocked", "s", property_get_handle_action, offsetof(Manager, handle_lid_switch_docked), SD_BUS_VTABLE_PROPERTY_CONST),
+        SD_BUS_PROPERTY("HandleSecureAttentionKey", "s", property_get_handle_action, offsetof(Manager, handle_secure_attention_key), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("HoldoffTimeoutUSec", "t", NULL, offsetof(Manager, holdoff_timeout_usec), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("IdleAction", "s", property_get_handle_action, offsetof(Manager, idle_action), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("IdleActionUSec", "t", NULL, offsetof(Manager, idle_action_usec), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("PreparingForShutdown", "b", property_get_preparing, 0, 0),
         SD_BUS_PROPERTY("PreparingForSleep", "b", property_get_preparing, 0, 0),
-        SD_BUS_PROPERTY("ScheduledShutdown", "(st)", property_get_scheduled_shutdown, 0, 0),
+        SD_BUS_PROPERTY("ScheduledShutdown", "(st)", property_get_scheduled_shutdown, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+        SD_BUS_PROPERTY("DesignatedMaintenanceTime", "s", property_get_maintenance_time, 0, 0),
         SD_BUS_PROPERTY("Docked", "b", property_get_docked, 0, 0),
         SD_BUS_PROPERTY("LidClosed", "b", property_get_lid_closed, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
         SD_BUS_PROPERTY("OnExternalPower", "b", property_get_on_external_power, 0, 0),
@@ -3753,7 +3825,7 @@ static const sd_bus_vtable manager_vtable[] = {
                                 SD_BUS_ARGS("s", session_id),
                                 SD_BUS_NO_RESULT,
                                 method_release_session,
-                                0),
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("ActivateSession",
                                 SD_BUS_ARGS("s", session_id),
                                 SD_BUS_NO_RESULT,
@@ -3785,7 +3857,7 @@ static const sd_bus_vtable manager_vtable[] = {
                       method_lock_sessions,
                       SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("KillSession",
-                                SD_BUS_ARGS("s", session_id, "s", who, "i", signal_number),
+                                SD_BUS_ARGS("s", session_id, "s", whom, "i", signal_number),
                                 SD_BUS_NO_RESULT,
                                 method_kill_session,
                                 SD_BUS_VTABLE_UNPRIVILEGED),
@@ -4000,6 +4072,9 @@ static const sd_bus_vtable manager_vtable[] = {
                                 method_set_wall_message,
                                 SD_BUS_VTABLE_UNPRIVILEGED),
 
+        SD_BUS_SIGNAL_WITH_ARGS("SecureAttentionKey",
+                                SD_BUS_ARGS("s", seat_id, "o", object_path),
+                                0),
         SD_BUS_SIGNAL_WITH_ARGS("SessionNew",
                                 SD_BUS_ARGS("s", session_id, "o", object_path),
                                 0),
@@ -4451,7 +4526,7 @@ int manager_abandon_scope(Manager *manager, const char *scope, sd_bus_error *ret
         return 1;
 }
 
-int manager_kill_unit(Manager *manager, const char *unit, KillWho who, int signo, sd_bus_error *error) {
+int manager_kill_unit(Manager *manager, const char *unit, KillWhom whom, int signo, sd_bus_error *error) {
         assert(manager);
         assert(unit);
         assert(SIGNAL_VALID(signo));
@@ -4464,7 +4539,7 @@ int manager_kill_unit(Manager *manager, const char *unit, KillWho who, int signo
                         NULL,
                         "ssi",
                         unit,
-                        who == KILL_LEADER ? "main" : "all",
+                        whom == KILL_LEADER ? "main" : "all",
                         signo);
 }
 

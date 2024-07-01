@@ -14,7 +14,7 @@ test_env = environment()
 test_env.set('SYSTEMD_LANGUAGE_FALLBACK_MAP', language_fallback_map)
 test_env.set('PATH', project_build_root + ':' + path)
 test_env.set('PROJECT_BUILD_ROOT', project_build_root)
-test_env.set('SYSTEMD_SLOW_TESTS', slow_tests ? '1' : '0')
+test_env.set('SYSTEMD_SLOW_TESTS', want_slow_tests ? '1' : '0')
 
 if efi_addon != ''
         test_env.set('EFI_ADDON', efi_addon)
@@ -156,7 +156,6 @@ simple_tests += files(
         'test-sd-hwdb.c',
         'test-sd-path.c',
         'test-secure-bits.c',
-        'test-selinux.c',
         'test-serialize.c',
         'test-set.c',
         'test-sha256.c',
@@ -265,7 +264,10 @@ executables += [
         },
         test_template + {
                 'sources' : files('test-dlopen-so.c'),
-                'dependencies' : libp11kit_cflags
+                'dependencies' : [
+                        libp11kit_cflags,
+                        libkmod_cflags,
+                ],
         },
         test_template + {
                 # only static linking apart from libdl, to make sure that the
@@ -335,17 +337,12 @@ executables += [
         },
         test_template + {
                 'sources' : files('test-netlink-manual.c'),
-                'dependencies' : libkmod,
+                'dependencies' : libkmod_cflags,
                 'conditions' : ['HAVE_KMOD'],
                 'type' : 'manual',
         },
         test_template + {
                 'sources' : files('test-nft-set.c'),
-                'type' : 'manual',
-        },
-        test_template + {
-                'sources' : files('test-nscd-flush.c'),
-                'conditions' : ['ENABLE_NSCD'],
                 'type' : 'manual',
         },
         test_template + {
@@ -400,6 +397,10 @@ executables += [
                 'sources' : files('test-seccomp.c'),
                 'dependencies' : libseccomp,
                 'conditions' : ['HAVE_SECCOMP'],
+        },
+        test_template + {
+                'sources' : files('test-selinux.c'),
+                'dependencies' : libselinux,
         },
         test_template + {
                 'sources' : files('test-set-disable-mempool.c'),
@@ -532,7 +533,7 @@ executables += [
                 'parallel' : false,
         },
         core_test_template + {
-                'sources' : files('test-manager.c'),
+                'sources' : files('test-taint.c'),
         },
         core_test_template + {
                 'sources' : files('test-namespace.c'),

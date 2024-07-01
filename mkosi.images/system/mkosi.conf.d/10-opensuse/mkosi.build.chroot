@@ -2,8 +2,16 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 set -e
 
-if [ ! -f "pkg/$PKG_SUBDIR/systemd.spec" ]; then
-    echo "spec not found at pkg/$PKG_SUBDIR/systemd.spec, run mkosi once with -ff to make sure the spec is cloned" >&2
+if ((NO_BUILD)); then
+    exit 0
+fi
+
+# shellcheck source=/dev/null
+. /usr/lib/os-release
+ID="${ID%-*}"
+
+if [ ! -f "pkg/$ID/systemd.spec" ]; then
+    echo "spec not found at pkg/$ID/systemd.spec, run mkosi once with -ff to make sure the spec is cloned" >&2
     exit 1
 fi
 
@@ -16,37 +24,99 @@ fi
 # The openSUSE filelists hardcode the manpage compression extension. This causes rpmbuild errors since we
 # disable manpage compression as the files cannot be found. Fix the issue by removing the compression
 # extension.
-find "pkg/$PKG_SUBDIR" -name "files.*" -exec sed --in-place 's/\.gz$//' {} \;
+find "pkg/$ID" -name "files.*" -exec sed --in-place 's/\.gz$//' {} \;
+
+if systemd-analyze compare-versions "$(rpm --version | cut -d ' ' -f3)" lt "4.20"; then
+    # Fix the %install override so debuginfo packages are generated.
+    tee --append /usr/lib/rpm/suse/macros <<'EOF'
+%install %{debug_package}\
+%%install\
+%{nil}
+EOF
+fi
+
+VERSION="$(cat meson.version)"
+RELEASE="$(date "+%Y%m%d%H%M%S" --date "@$TS")"
+
+DIST="$(rpm --eval %dist)"
+ARCH="$(rpm --eval %_arch)"
+SRCDEST="/usr/src/debug/systemd-$VERSION-${RELEASE}${DIST}.$ARCH"
+
+MKOSI_CFLAGS="-O0 -Wp,-U_FORTIFY_SOURCE"
+if ((WITH_DEBUG)); then
+    MKOSI_CFLAGS="$MKOSI_CFLAGS -fdebug-prefix-map=../src=$SRCDEST"
+fi
+if ((LLVM)); then
+    # TODO: Remove -fno-sanitize-function when https://github.com/systemd/systemd/issues/29972 is fixed.
+    MKOSI_CFLAGS="$MKOSI_CFLAGS -shared-libasan -fno-sanitize=function"
+fi
+
+MKOSI_LDFLAGS="$(rpm --eval "%{?build_ldflags}")"
+if ((LLVM)) && [[ -n "$SANITIZERS" ]]; then
+    MKOSI_LDFLAGS="$MKOSI_LDFLAGS -Wl,-rpath=$(clang --print-file-name="")lib/linux"
+fi
+
+# A macro can't have an empty body and currently opensuse does not specify any of its own linker flags so
+# set LDFLAGS to %{nil} if there are no linker flags.
+if [[ -z "${MKOSI_LDFLAGS// }" ]]; then
+    MKOSI_LDFLAGS="%{nil}"
+fi
+
+MKOSI_MESON_OPTIONS="-D mode=developer -D b_sanitize=${SANITIZERS:-none}"
+if ((WIPE)); then
+    MKOSI_MESON_OPTIONS="$MKOSI_MESON_OPTIONS --wipe"
+fi
+
+# TODO: Drop when the spec is fixed (either the patch is adapted or not applied when building for upstream).
+sed --in-place '/0009-pid1-handle-console-specificities-weirdness-for-s390.patch/d' "pkg/$ID/systemd.spec"
 
 build() {
-    # TODO: Replace meson_build and meson_install overrides with "--undefine __meson_verbose" once
-    # https://github.com/mesonbuild/meson/pull/12835 is available.
+    IFS=
     # shellcheck disable=SC2046
+    env \
+    --unset CFLAGS \
+    --unset CXXFLAGS \
+    --unset LDFLAGS \
+    CC="$( ((LLVM)) && echo clang || echo gcc)" \
+    CXX="$( ((LLVM)) && echo clang++ || echo g++)" \
+    CC_LD="$( ((LLVM)) && echo lld)" \
+    CXX_LD="$( ((LLVM)) && echo lld)" \
     rpmbuild \
         -bb \
         --build-in-place \
         --with upstream \
-        $( ((WITH_TESTS)) || echo --nocheck) \
+        $( ((WITH_TESTS)) || echo "--nocheck") \
         --define "_topdir /var/tmp" \
-        --define "_sourcedir pkg/$PKG_SUBDIR" \
+        --define "_sourcedir pkg/$ID" \
         --define "_rpmdir $OUTPUTDIR" \
-        ${BUILDDIR:+--define} \
-        ${BUILDDIR:+"_vpath_builddir $BUILDDIR"} \
+        ${BUILDDIR:+"--define=_vpath_builddir $BUILDDIR"} \
         --define "_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
         --define "_binary_payload w.ufdio" \
-        --define "debug_package %{nil}" \
+        $( ((WITH_DEBUG)) || echo "--define=debug_package %{nil}") \
         --define "vendor openSUSE" \
-        --define "version_override $(cat meson.version)" \
-        --define "release_override $(date "+%Y%m%d%H%M%S" --date "@$TS")" \
-        --define "__check_files sh -c '$(rpm --eval %__check_files) | tee /tmp/unpackaged-files'" \
-        --define "meson_build %{shrink:%{__meson} compile -C %{_vpath_builddir} -j %{_smp_build_ncpus} %{nil}}" \
-        --define "meson_install %{shrink:DESTDIR=%{buildroot} %{__meson} install -C %{_vpath_builddir} --no-rebuild --quiet %{nil}}" \
-        --define "meson_extra_configure_options -D mode=developer -D b_sanitize=${SANITIZERS:-none}" \
+        --define "version_override $VERSION" \
+        --define "release_override $RELEASE" \
+        --define "__check_files sh -c '$(rpm --define "_topdir /var/tmp" --eval %__check_files) | tee /tmp/unpackaged-files'" \
+        --define "build_cflags $(rpm --eval "%{?build_cflags}") $MKOSI_CFLAGS $CFLAGS" \
+        --define "build_cxxflags $(rpm --eval "%{?build_cxxflags}") $MKOSI_CFLAGS $CFLAGS" \
+        --define "build_ldflags $MKOSI_LDFLAGS $LDFLAGS" \
+        $( ((MESON_VERBOSE)) || echo "--undefine=__meson_verbose") \
+        --define "meson_extra_configure_options $MKOSI_MESON_OPTIONS $MESON_OPTIONS" \
         --define "__os_install_post /usr/lib/rpm/brp-suse %{nil}" \
         --define "__elf_exclude_path ^/usr/lib/systemd/tests/unit-tests/.*$" \
         --define "__script_requires %{nil}" \
+        --define "_find_debuginfo_dwz_opts %{nil}" \
+        --define "_fixperms true" \
+        --noclean \
         "$@" \
-        "pkg/$PKG_SUBDIR/systemd.spec"
+        "pkg/$ID/systemd.spec"
+
+    EXIT_STATUS=$?
+
+    # Make sure we don't reconfigure twice.
+    MKOSI_MESON_OPTIONS="${MKOSI_MESON_OPTIONS//"--wipe"/}"
+
+    return $EXIT_STATUS
 }
 
 if ! build; then
@@ -58,7 +128,7 @@ if ! build; then
     # warnings.
     rm systemd.lang
 
-    cat /tmp/unpackaged-files >>"pkg/$PKG_SUBDIR/files.systemd"
+    grep -v ".debug" /tmp/unpackaged-files >>"pkg/$ID/files.systemd"
     build --noprep --nocheck
 fi
 

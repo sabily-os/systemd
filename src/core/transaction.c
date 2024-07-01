@@ -446,10 +446,10 @@ static int transaction_verify_order_one(Transaction *tr, Job *j, Job *from, unsi
          * the graph over 'before' edges in the actual job execution order. We traverse over both unit
          * ordering dependencies and we test with job_compare() whether it is the 'before' edge in the job
          * execution ordering. */
-        for (size_t d = 0; d < ELEMENTSOF(directions); d++) {
+        FOREACH_ELEMENT(d, directions) {
                 Unit *u;
 
-                UNIT_FOREACH_DEPENDENCY(u, j->unit, directions[d]) {
+                UNIT_FOREACH_DEPENDENCY(u, j->unit, *d) {
                         Job *o;
 
                         /* Is there a job for this unit? */
@@ -463,7 +463,7 @@ static int transaction_verify_order_one(Transaction *tr, Job *j, Job *from, unsi
                         }
 
                         /* Cut traversing if the job j is not really *before* o. */
-                        if (job_compare(j, o, directions[d]) >= 0)
+                        if (job_compare(j, o, *d) >= 0)
                                 continue;
 
                         r = transaction_verify_order_one(tr, o, j, generation, e);
@@ -964,7 +964,7 @@ int transaction_add_job_and_dependencies(
 
         if (type != JOB_STOP) {
                 r = bus_unit_validate_load_state(unit, e);
-                /* The time-based cache allows to start new units without daemon-reload, but if they are
+                /* The time-based cache allows new units to be started without daemon-reload, but if they are
                  * already referenced (because of dependencies or ordering) then we have to force a load of
                  * the fragment. As an optimization, check first if anything in the usual paths was modified
                  * since the last time the cache was loaded. Also check if the last time an attempt to load

@@ -61,6 +61,7 @@ libcore_sources = files(
         'smack-setup.c',
         'socket.c',
         'swap.c',
+        'taint.c',
         'target.c',
         'timer.c',
         'transaction.c',
@@ -125,7 +126,7 @@ libcore = shared_library(
                         libaudit,
                         libblkid,
                         libdl,
-                        libkmod,
+                        libkmod_cflags,
                         libm,
                         libmount,
                         libpam,
@@ -142,6 +143,7 @@ core_includes = [includes, include_directories('.')]
 systemd_sources = files(
         'main.c',
         'crash-handler.c',
+        'clock-warp.c',
 )
 
 systemd_executor_sources = files(

@@ -1373,6 +1373,10 @@ static int exec_parameters_serialize(const ExecParameters *p, const ExecContext 
         if (r < 0)
                 return r;
 
+        r = serialize_fd(f, fds, "exec-parameters-handoff-timestamp-fd", p->handoff_timestamp_fd);
+        if (r < 0)
+                return r;
+
         if (c && exec_context_restrict_filesystems_set(c)) {
                 r = serialize_fd(f, fds, "exec-parameters-bpf-outer-map-fd", p->bpf_restrict_fs_map_fd);
                 if (r < 0)
@@ -1593,7 +1597,7 @@ static int exec_parameters_deserialize(ExecParameters *p, FILE *f, FDSet *fds) {
                         if (fd < 0)
                                 continue;
 
-                        p->stdin_fd = fd;
+                        close_and_replace(p->stdin_fd, fd);
 
                 } else if ((val = startswith(l, "exec-parameters-stdout-fd="))) {
                         int fd;
@@ -1602,7 +1606,7 @@ static int exec_parameters_deserialize(ExecParameters *p, FILE *f, FDSet *fds) {
                         if (fd < 0)
                                 continue;
 
-                        p->stdout_fd = fd;
+                        close_and_replace(p->stdout_fd, fd);
 
                 } else if ((val = startswith(l, "exec-parameters-stderr-fd="))) {
                         int fd;
@@ -1611,7 +1615,7 @@ static int exec_parameters_deserialize(ExecParameters *p, FILE *f, FDSet *fds) {
                         if (fd < 0)
                                 continue;
 
-                        p->stderr_fd = fd;
+                        close_and_replace(p->stderr_fd, fd);
                 } else if ((val = startswith(l, "exec-parameters-exec-fd="))) {
                         int fd;
 
@@ -1619,7 +1623,15 @@ static int exec_parameters_deserialize(ExecParameters *p, FILE *f, FDSet *fds) {
                         if (fd < 0)
                                 continue;
 
-                        p->exec_fd = fd;
+                        close_and_replace(p->exec_fd, fd);
+                } else if ((val = startswith(l, "exec-parameters-handoff-timestamp-fd="))) {
+                        int fd;
+
+                        fd = deserialize_fd(fds, val);
+                        if (fd < 0)
+                                continue;
+
+                        close_and_replace(p->handoff_timestamp_fd, fd);
                 } else if ((val = startswith(l, "exec-parameters-bpf-outer-map-fd="))) {
                         int fd;
 
@@ -1627,13 +1639,13 @@ static int exec_parameters_deserialize(ExecParameters *p, FILE *f, FDSet *fds) {
                         if (fd < 0)
                                 continue;
 
-                        p->bpf_restrict_fs_map_fd = fd;
+                        close_and_replace(p->bpf_restrict_fs_map_fd, fd);
                 } else if ((val = startswith(l, "exec-parameters-notify-socket="))) {
                         r = free_and_strdup(&p->notify_socket, val);
                         if (r < 0)
                                 return r;
                 } else if ((val = startswith(l, "exec-parameters-open-file="))) {
-                        OpenFile *of = NULL;
+                        OpenFile *of;
 
                         r = open_file_parse(val, &of);
                         if (r < 0)
@@ -1651,7 +1663,7 @@ static int exec_parameters_deserialize(ExecParameters *p, FILE *f, FDSet *fds) {
                         if (fd < 0)
                                 continue;
 
-                        p->user_lookup_fd = fd;
+                        close_and_replace(p->user_lookup_fd, fd);
                 } else if ((val = startswith(l, "exec-parameters-files-env="))) {
                         r = deserialize_strv(val, &p->files_env);
                         if (r < 0)
@@ -1820,11 +1832,15 @@ static int exec_context_serialize(const ExecContext *c, FILE *f) {
         if (r < 0)
                 return r;
 
+        r = serialize_item_tristate(f, "exec-context-mount-api-vfs", c->mount_apivfs);
+        if (r < 0)
+                return r;
+
         r = serialize_item_tristate(f, "exec-context-memory-ksm", c->memory_ksm);
         if (r < 0)
                 return r;
 
-        r = serialize_bool_elide(f, "exec-context-private-tmp", c->private_tmp);
+        r = serialize_item(f, "exec-context-private-tmp", private_tmp_to_string(c->private_tmp));
         if (r < 0)
                 return r;
 
@@ -1875,12 +1891,6 @@ static int exec_context_serialize(const ExecContext *c, FILE *f) {
         r = serialize_item(f, "exec-context-protect-system", protect_system_to_string(c->protect_system));
         if (r < 0)
                 return r;
-
-        if (c->mount_apivfs_set) {
-                r = serialize_bool(f, "exec-context-mount-api-vfs", c->mount_apivfs);
-                if (r < 0)
-                        return r;
-        }
 
         r = serialize_bool_elide(f, "exec-context-same-pgrp", c->same_pgrp);
         if (r < 0)
@@ -2701,15 +2711,18 @@ static int exec_context_deserialize(ExecContext *c, FILE *f) {
                         r = safe_atoi(val, &c->private_mounts);
                         if (r < 0)
                                 return r;
+                } else if ((val = startswith(l, "exec-context-mount-api-vfs="))) {
+                        r = safe_atoi(val, &c->mount_apivfs);
+                        if (r < 0)
+                                return r;
                 } else if ((val = startswith(l, "exec-context-memory-ksm="))) {
                         r = safe_atoi(val, &c->memory_ksm);
                         if (r < 0)
                                 return r;
                 } else if ((val = startswith(l, "exec-context-private-tmp="))) {
-                        r = parse_boolean(val);
-                        if (r < 0)
-                                return r;
-                        c->private_tmp = r;
+                        c->private_tmp = private_tmp_from_string(val);
+                        if (c->private_tmp < 0)
+                                return c->private_tmp;
                 } else if ((val = startswith(l, "exec-context-private-devices="))) {
                         r = parse_boolean(val);
                         if (r < 0)
@@ -2768,12 +2781,6 @@ static int exec_context_deserialize(ExecContext *c, FILE *f) {
                         c->protect_system = protect_system_from_string(val);
                         if (c->protect_system < 0)
                                 return -EINVAL;
-                } else if ((val = startswith(l, "exec-context-mount-api-vfs="))) {
-                        r = parse_boolean(val);
-                        if (r < 0)
-                                return r;
-                        c->mount_apivfs = r;
-                        c->mount_apivfs_set = true;
                 } else if ((val = startswith(l, "exec-context-same-pgrp="))) {
                         r = parse_boolean(val);
                         if (r < 0)

@@ -64,24 +64,30 @@ journal:
 journal-remote:
   - changed-files:
     - any-glob-to-any-file: 'src/journal-remote/*'
+l10n 🌍:
+  - changed-files:
+    - any-glob-to-any-file: 'po/*'
 login:
   - changed-files:
-    - any-glob-to-any-file: '**/sd-login*/**'
-logind:
-  - changed-files:
-    - any-glob-to-any-file: 'src/login/*'
+    - any-glob-to-any-file: ['src/login/*', '**/sd-login*/**']
 meson:
   - changed-files:
     - any-glob-to-any-file: ['meson_options.txt', '**/meson.build']
 mkosi:
   - changed-files:
     - any-glob-to-any-file: ['.mkosi/*', 'mkosi.build']
+mountfsd:
+  - changed-files:
+    - any-glob-to-any-file: ['src/mountfsd/*']
 network:
   - changed-files:
     - any-glob-to-any-file: ['src/libsystemd-network/**/*', 'src/network/**/*']
 nspawn:
   - changed-files:
     - any-glob-to-any-file: '**/*nspawn*'
+nsresource:
+  - changed-files:
+    - any-glob-to-any-file: '**/*nsresource*'
 portable:
   - changed-files:
     - any-glob-to-any-file: 'src/portable/**/*'

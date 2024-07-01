@@ -316,7 +316,7 @@ static int produce_plot_as_svg(
                     strempty(host->virtualization));
 
         svg("<g transform=\"translate(%.3f,100)\">\n", 20.0 + (SCALE_X * boot->firmware_time));
-        if (timestamp_is_set(boot->softreboot_start_time))
+        if (boot->soft_reboots_count > 0)
                 svg_graph_box(m, 0, boot->finish_time);
         else
                 svg_graph_box(m, -(double) boot->firmware_time, boot->finish_time);
@@ -347,7 +347,7 @@ static int produce_plot_as_svg(
                 svg_text(true, boot->initrd_time, y, "initrd");
                 y++;
         }
-        if (timestamp_is_set(boot->softreboot_start_time)) {
+        if (boot->soft_reboots_count > 0) {
                 svg_bar("soft-reboot", 0, boot->userspace_time, y);
                 svg_text(true, 0, y, "soft-reboot");
                 y++;
@@ -413,8 +413,8 @@ static int show_table(Table *table, const char *word) {
         if (!table_isempty(table)) {
                 table_set_header(table, arg_legend);
 
-                if (!FLAGS_SET(arg_json_format_flags, JSON_FORMAT_OFF))
-                        r = table_print_json(table, NULL, arg_json_format_flags | JSON_FORMAT_COLOR_AUTO);
+                if (!FLAGS_SET(arg_json_format_flags, SD_JSON_FORMAT_OFF))
+                        r = table_print_json(table, NULL, arg_json_format_flags | SD_JSON_FORMAT_COLOR_AUTO);
                 else
                         r = table_print(table, NULL);
                 if (r < 0)
@@ -490,7 +490,7 @@ int verb_plot(int argc, char *argv[], void *userdata) {
 
         typesafe_qsort(times, n, compare_unit_start);
 
-        if (!FLAGS_SET(arg_json_format_flags, JSON_FORMAT_OFF) || arg_table)
+        if (!FLAGS_SET(arg_json_format_flags, SD_JSON_FORMAT_OFF) || arg_table)
                 r = produce_plot_as_text(times, boot);
         else
                 r = produce_plot_as_svg(times, host, boot, pretty_times);
