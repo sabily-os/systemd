@@ -198,7 +198,14 @@ TEST(get_paths, .sd_booted = true) {
         log_info("Root = %s", a);
 }
 
-TEST(proc) {
+static inline bool hidden_cgroup(const char *p) {
+        assert(p);
+
+        /* Consider top-level cgroup hidden from us */
+        return p[0] == '/' && p[strspn(p, "/")] == '.';
+}
+
+TEST(proc, .sd_booted = true) {
         _cleanup_closedir_ DIR *d = NULL;
         int r;
 
@@ -209,34 +216,57 @@ TEST(proc) {
                 _cleanup_(pidref_done) PidRef pid = PIDREF_NULL;
                 uid_t uid = UID_INVALID;
 
-                r = proc_dir_read_pidref(d, &pid);
-                assert_se(r >= 0);
-
+                ASSERT_OK(r = proc_dir_read_pidref(d, &pid));
                 if (r == 0)
                         break;
 
                 if (pidref_is_kernel_thread(&pid) != 0)
                         continue;
 
-                cg_pidref_get_path(SYSTEMD_CGROUP_CONTROLLER, &pid, &path);
-                cg_pid_get_path_shifted(pid.pid, NULL, &path_shifted);
-                cg_pidref_get_owner_uid(&pid, &uid);
-                cg_pidref_get_session(&pid, &session);
-                cg_pidref_get_unit(&pid, &unit);
-                cg_pid_get_user_unit(pid.pid, &user_unit);
-                cg_pid_get_machine_name(pid.pid, &machine);
-                cg_pid_get_slice(pid.pid, &slice);
+                r = cg_pidref_get_path(SYSTEMD_CGROUP_CONTROLLER, &pid, &path);
+                if (r == -ESRCH)
+                        continue;
+                ASSERT_OK(r);
 
-                printf(PID_FMT"\t%s\t%s\t"UID_FMT"\t%s\t%s\t%s\t%s\t%s\n",
-                       pid.pid,
-                       path,
-                       path_shifted,
-                       uid,
-                       session,
-                       unit,
-                       user_unit,
-                       machine,
-                       slice);
+                /* Test may run in a container with supervising/monitor processes that don't belong to our
+                 * cgroup tree (slices/leaves) */
+                if (hidden_cgroup(path))
+                        continue;
+
+                r = cg_pid_get_path_shifted(pid.pid, NULL, &path_shifted);
+                if (r != -ESRCH)
+                        ASSERT_OK(r);
+                r = cg_pidref_get_unit(&pid, &unit);
+                if (r != -ESRCH)
+                        ASSERT_OK(r);
+                r = cg_pid_get_slice(pid.pid, &slice);
+                if (r != -ESRCH)
+                        ASSERT_OK(r);
+
+                /* Not all processes belong to a specific user or a machine */
+                r = cg_pidref_get_owner_uid(&pid, &uid);
+                if (!IN_SET(r, -ESRCH, -ENXIO))
+                        ASSERT_OK(r);
+                r = cg_pidref_get_session(&pid, &session);
+                if (!IN_SET(r, -ESRCH, -ENXIO))
+                        ASSERT_OK(r);
+                r = cg_pid_get_user_unit(pid.pid, &user_unit);
+                if (!IN_SET(r, -ESRCH, -ENXIO))
+                        ASSERT_OK(r);
+                r = cg_pid_get_machine_name(pid.pid, &machine);
+                if (!IN_SET(r, -ESRCH, -ENOENT))
+                        ASSERT_OK(r);
+
+                log_debug(PID_FMT": %s, %s, "UID_FMT", %s, %s, %s, %s, %s",
+                          pid.pid,
+                          path,
+                          strna(path_shifted),
+                          uid,
+                          strna(session),
+                          strna(unit),
+                          strna(user_unit),
+                          strna(machine),
+                          strna(slice));
         }
 }
 

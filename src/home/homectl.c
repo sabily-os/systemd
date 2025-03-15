@@ -2548,7 +2548,7 @@ static int create_or_register_from_credentials(void) {
                 const char *e;
                 if ((e = startswith(de->d_name, "home.create.")))
                         op = OPERATION_CREATE;
-                if ((e = startswith(de->d_name, "home.register.")))
+                else if ((e = startswith(de->d_name, "home.register.")))
                         op = OPERATION_REGISTER;
                 else
                         continue;
@@ -2710,7 +2710,12 @@ static int create_interactively(void) {
                 return 0;
         }
 
-        printf("\nPlease create your user account!\n");
+        putchar('\n');
+        if (emoji_enabled()) {
+                fputs(special_glyph(SPECIAL_GLYPH_HOME), stdout);
+                putchar(' ');
+        }
+        printf("Please create your user account!\n");
 
         if (!any_key_to_proceed()) {
                 log_notice("Skipping.");
