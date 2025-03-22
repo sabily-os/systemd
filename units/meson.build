@@ -484,6 +484,11 @@ units = [
           'symlinks' : ['dbus-org.freedesktop.machine1.service'],
         },
         {
+          'file' : 'systemd-machined.socket',
+          'conditions' : ['ENABLE_MACHINED'],
+          'symlinks' : ['sockets.target.wants/'],
+        },
+        {
           'file' : 'systemd-modules-load.service.in',
           'conditions' : ['HAVE_KMOD'],
           'symlinks' : ['sysinit.target.wants/'],
@@ -812,6 +817,10 @@ units = [
           'file' : 'systemd-user-sessions.service.in',
           'conditions' : ['HAVE_PAM'],
           'symlinks' : ['multi-user.target.wants/'],
+        },
+        {
+          'file' : 'systemd-userdb-load-credentials.service',
+          'conditions' : ['ENABLE_USERDB'],
         },
         {
           'file' : 'systemd-userdbd.service.in',

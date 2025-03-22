@@ -137,7 +137,7 @@ static int print_efi_option(uint16_t id, int *n_printed, bool in_order) {
         printf("       Status: %sactive%s\n", active ? "" : "in", in_order ? ", boot-order" : "");
         printf("    Partition: /dev/disk/by-partuuid/" SD_ID128_UUID_FORMAT_STR "\n",
                SD_ID128_FORMAT_VAL(partition));
-        printf("         File: %s%s\n", special_glyph(SPECIAL_GLYPH_TREE_RIGHT), path);
+        printf("         File: %s%s\n", glyph(GLYPH_TREE_RIGHT), path);
         printf("\n");
 
         (*n_printed)++;
@@ -230,7 +230,7 @@ static int enumerate_binaries(
                                   * one more, and can draw the tree glyph properly. */
                         printf("         %s %s%s\n",
                                *is_first ? "File:" : "     ",
-                               special_glyph(SPECIAL_GLYPH_TREE_BRANCH), *previous);
+                               glyph(GLYPH_TREE_BRANCH), *previous);
                         *is_first = false;
                         *previous = mfree(*previous);
                 }
@@ -281,7 +281,7 @@ static int status_binaries(const char *esp_path, sd_id128_t partition) {
         if (last) /* let's output the last entry now, since now we know that there will be no more, and can draw the tree glyph properly */
                 printf("         %s %s%s\n",
                        is_first ? "File:" : "     ",
-                       special_glyph(SPECIAL_GLYPH_TREE_RIGHT), last);
+                       glyph(GLYPH_TREE_RIGHT), last);
 
         if (r == 0 && !arg_quiet)
                 log_info("systemd-boot not installed in ESP.");
@@ -370,7 +370,13 @@ int verb_status(int argc, char *argv[], void *userdata) {
 
         pager_open(arg_pager_flags);
 
-        if (!arg_root && is_efi_boot()) {
+        if (arg_root)
+                log_debug("Skipping 'System' section, operating offline.");
+        else if (!is_efi_boot())
+                printf("%sSystem:%s\n"
+                       "Not booted with EFI\n\n",
+                       ansi_underline(), ansi_normal());
+        else {
                 static const struct {
                         uint64_t flag;
                         const char *name;
@@ -482,16 +488,17 @@ int verb_status(int argc, char *argv[], void *userdata) {
 
                         sd_id128_t loader_partition_uuid = SD_ID128_NULL;
                         (void) efi_loader_get_device_part_uuid(&loader_partition_uuid);
-                        print_yes_no_line(/* first= */ false, !sd_id128_is_null(loader_partition_uuid), "Boot loader set partition information");
 
                         _cleanup_free_ char *loader_url = NULL;
                         (void) efi_get_variable_string_and_warn(EFI_LOADER_VARIABLE_STR("LoaderDeviceURL"), &loader_url);
-                        print_yes_no_line(/* first= */ false, !!loader_url, "Boot loader set network boot URL information");
 
                         if (!sd_id128_is_null(loader_partition_uuid)) {
-                                if (!sd_id128_is_null(esp_uuid) && !sd_id128_equal(esp_uuid, loader_partition_uuid))
-                                        printf("WARNING: The boot loader reports a different partition UUID than the detected ESP ("SD_ID128_UUID_FORMAT_STR" vs. "SD_ID128_UUID_FORMAT_STR")!\n",
-                                               SD_ID128_FORMAT_VAL(loader_partition_uuid), SD_ID128_FORMAT_VAL(esp_uuid));
+                                /* If we know esp_uuid and loader_partition_uuid is not equal to it, print a warning. */
+                                if (!sd_id128_is_null(esp_uuid) && !sd_id128_equal(loader_partition_uuid, esp_uuid))
+                                        printf("WARNING: The boot loader reports a different partition UUID than the detected ESP "
+                                               "("SD_ID128_UUID_FORMAT_STR" vs. "SD_ID128_UUID_FORMAT_STR")!\n",
+                                               SD_ID128_FORMAT_VAL(loader_partition_uuid),
+                                               SD_ID128_FORMAT_VAL(esp_uuid));
 
                                 printf("    Partition: /dev/disk/by-partuuid/" SD_ID128_UUID_FORMAT_STR "\n",
                                        SD_ID128_FORMAT_VAL(loader_partition_uuid));
@@ -499,7 +506,7 @@ int verb_status(int argc, char *argv[], void *userdata) {
                                 printf("    Partition: n/a\n");
 
                         if (loader_path)
-                                printf("       Loader: %s%s\n", special_glyph(SPECIAL_GLYPH_TREE_RIGHT), strna(loader_path));
+                                printf("       Loader: %s%s\n", glyph(GLYPH_TREE_RIGHT), strna(loader_path));
 
                         if (loader_url)
                                 printf(" Net Boot URL: %s\n", loader_url);
@@ -522,17 +529,20 @@ int verb_status(int argc, char *argv[], void *userdata) {
 
                         sd_id128_t stub_partition_uuid = SD_ID128_NULL;
                         (void) efi_stub_get_device_part_uuid(&stub_partition_uuid);
-                        print_yes_no_line(/* first= */ false, !sd_id128_is_null(stub_partition_uuid), "Stub loader set partition information");
 
                         _cleanup_free_ char *stub_url = NULL;
                         (void) efi_get_variable_string_and_warn(EFI_LOADER_VARIABLE_STR("StubDeviceURL"), &stub_url);
-                        print_yes_no_line(/* first= */ false, !!stub_url, "Stub set network boot URL information");
 
                         if (!sd_id128_is_null(stub_partition_uuid)) {
-                                if (!(!sd_id128_is_null(esp_uuid) && sd_id128_equal(esp_uuid, stub_partition_uuid)) &&
-                                    !(!sd_id128_is_null(xbootldr_uuid) && sd_id128_equal(xbootldr_uuid, stub_partition_uuid)))
-                                        printf("WARNING: The stub loader reports a different UUID than the detected ESP or XBOOTDLR partition ("SD_ID128_UUID_FORMAT_STR" vs. "SD_ID128_UUID_FORMAT_STR"/"SD_ID128_UUID_FORMAT_STR")!\n",
-                                               SD_ID128_FORMAT_VAL(stub_partition_uuid), SD_ID128_FORMAT_VAL(esp_uuid), SD_ID128_FORMAT_VAL(xbootldr_uuid));
+                                /* _If_ we know both esp_uuid and xbootldr_uuid and stub_partition_uuid is not equal
+                                 * to _either_ of them, print a warning. */
+                                if (!sd_id128_is_null(esp_uuid) && !sd_id128_equal(stub_partition_uuid, esp_uuid) &&
+                                    !sd_id128_is_null(xbootldr_uuid) && !sd_id128_equal(stub_partition_uuid, xbootldr_uuid))
+                                        printf("WARNING: The stub loader reports a different UUID than the detected ESP and XBOOTDLR partitions "
+                                               "("SD_ID128_UUID_FORMAT_STR" vs. "SD_ID128_UUID_FORMAT_STR"/"SD_ID128_UUID_FORMAT_STR")!\n",
+                                               SD_ID128_FORMAT_VAL(stub_partition_uuid),
+                                               SD_ID128_FORMAT_VAL(esp_uuid),
+                                               SD_ID128_FORMAT_VAL(xbootldr_uuid));
 
                                 printf("    Partition: /dev/disk/by-partuuid/" SD_ID128_UUID_FORMAT_STR "\n",
                                        SD_ID128_FORMAT_VAL(stub_partition_uuid));
@@ -540,7 +550,7 @@ int verb_status(int argc, char *argv[], void *userdata) {
                                 printf("    Partition: n/a\n");
 
                         if (stub_path)
-                                printf("         Stub: %s%s\n", special_glyph(SPECIAL_GLYPH_TREE_RIGHT), strna(stub_path));
+                                printf("         Stub: %s%s\n", glyph(GLYPH_TREE_RIGHT), strna(stub_path));
 
                         if (stub_url)
                                 printf(" Net Boot URL: %s\n", stub_url);
@@ -567,10 +577,7 @@ int verb_status(int argc, char *argv[], void *userdata) {
                 }
 
                 printf("\n");
-        } else
-                printf("%sSystem:%s\n"
-                       "Not booted with EFI\n\n",
-                       ansi_underline(), ansi_normal());
+        }
 
         if (arg_esp_path)
                 RET_GATHER(r, status_binaries(arg_esp_path, esp_uuid));

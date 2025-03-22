@@ -32,6 +32,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 
@@ -3027,11 +3028,13 @@ class NetworkdNetDevTests(unittest.TestCase, Utilities):
                           '25-vxlan-ipv6.netdev', '25-vxlan-ipv6.network',
                           '25-vxlan-independent.netdev', '26-netdev-link-local-addressing-yes.network',
                           '25-veth.netdev', '25-vxlan-veth99.network', '25-ipv6-prefix.network',
-                          '25-vxlan-local-slaac.netdev', '25-vxlan-local-slaac.network')
+                          '25-vxlan-local-slaac.netdev', '25-vxlan-local-slaac.network',
+                          '25-vxlan-external.netdev', '25-vxlan-external.network')
         start_networkd()
 
         self.wait_online('test1:degraded', 'veth99:routable', 'veth-peer:degraded',
-                         'vxlan99:degraded', 'vxlan98:degraded', 'vxlan97:degraded', 'vxlan-slaac:degraded')
+                         'vxlan99:degraded', 'vxlan98:degraded', 'vxlan97:degraded', 'vxlan-slaac:degraded',
+                         'vxlan-external:degraded')
         self.networkctl_check_unit('test1', '11-dummy', '25-vxlan-test1')
         self.networkctl_check_unit('veth99', '25-veth', '25-vxlan-veth99')
         self.networkctl_check_unit('veth-peer', '25-veth', '25-ipv6-prefix')
@@ -3039,6 +3042,7 @@ class NetworkdNetDevTests(unittest.TestCase, Utilities):
         self.networkctl_check_unit('vxlan98', '25-vxlan-independent', '26-netdev-link-local-addressing-yes')
         self.networkctl_check_unit('vxlan97', '25-vxlan-ipv6', '25-vxlan-ipv6')
         self.networkctl_check_unit('vxlan-slaac', '25-vxlan-local-slaac', '25-vxlan-local-slaac')
+        self.networkctl_check_unit('vxlan-external', '25-vxlan-external', '25-vxlan-external')
 
         output = check_output('ip -d -d link show vxlan99')
         print(output)
@@ -3082,6 +3086,12 @@ class NetworkdNetDevTests(unittest.TestCase, Utilities):
         output = check_output('ip -6 address show veth99')
         print(output)
         self.assertIn('inet6 2002:da8:1:0:1034:56ff:fe78:9abc/64 scope global dynamic', output)
+
+        output = check_output('ip -d link show vxlan-external')
+        print(output)
+        self.assertIn('id 0 ', output)
+        self.assertIn('external', output)
+        self.assertIn('vnifilter', output)
 
     @unittest.skipUnless(compare_kernel_version("6"), reason="Causes kernel panic on unpatched kernels: https://bugzilla.kernel.org/show_bug.cgi?id=208315")
     def test_macsec(self):
@@ -4951,6 +4961,62 @@ class NetworkdNetworkTests(unittest.TestCase, Utilities):
         print(output)
         self.assertRegex(output, 'inet 10.1.2.3/16 scope global dummy98')
         self.assertNotRegex(output, 'inet 10.2.3.4/16 scope global dynamic dummy98')
+
+    def check_keep_configuration_on_restart(self):
+        self.wait_online('dummy98:routable')
+        self.wait_online('unmanaged0:routable', setup_state='unmanaged')
+
+        print('### ip -6 address show dev dummy98')
+        output = check_output('ip -6 address show dev dummy98')
+        print(output)
+        self.assertIn('inet6 2001:db8:0:f101::15/64 scope global', output)
+        self.assertIn('inet6 2001:db8:1:f101::15/64 scope global deprecated', output)
+
+        print('### ip -6 address show dev unmanaged0')
+        output = check_output('ip -6 address show dev unmanaged0')
+        print(output)
+        self.assertIn('inet6 2001:db8:9999:f101::15/64 scope global', output)
+
+        print('### ip -6 route show default dev dummy98')
+        output = check_output('ip -6 route show default dev dummy98')
+        print(output)
+        self.assertIn('default via fe80::f0ca:cc1a proto static metric 1 pref medium', output)
+
+    def test_keep_configuration_on_restart(self):
+        # Add an unmanaged interface with an up address
+        call('ip link add unmanaged0 type dummy')
+        call('ip link set unmanaged0 up')
+        call('ip -6 addr add 2001:db8:9999:f101::15/64 dev unmanaged0')
+
+        copy_network_unit('12-dummy.netdev', '85-static-ipv6.network')
+        start_networkd()
+        self.check_keep_configuration_on_restart()
+
+        # Start `ip monitor` with output to a temporary file
+        with tempfile.TemporaryFile(mode='r+', prefix='ip_monitor') as logfile:
+            process = subprocess.Popen(['ip', 'monitor', 'dev', 'dummy98'], stdout=logfile, text=True)
+            restart_networkd()
+            self.check_keep_configuration_on_restart()
+
+            process.send_signal(signal.SIGTERM)
+            process.wait()
+
+            print('### ip monitor dev dummy98 BEGIN')
+
+            # Read the `ip monitor` output looking for network changes
+            logfile.seek(0)
+            for line in logfile:
+                print(line, end="")
+                # Check if a link went down
+                self.assertNotRegex(line, 'unmanaged0: .* state DOWN')
+                self.assertNotRegex(line, 'dummy98: .* state DOWN')
+                # Check if an address was removed
+                self.assertNotRegex(line, '^Deleted .* 2001:db8:')
+                self.assertNotRegex(line, '^Deleted 2001:db8:.*/64')
+                # Check if the default route was removed
+                self.assertNotRegex(line, '^Deleted default via fe80::f0ca:cc1a')
+
+            print('### ip monitor dev dummy98 END')
 
     def check_nexthop(self, manage_foreign_nexthops, first):
         self.wait_online('veth99:routable', 'veth-peer:routable', 'dummy98:routable')

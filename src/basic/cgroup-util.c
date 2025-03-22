@@ -704,26 +704,7 @@ int cg_set_xattr(const char *path, const char *name, const void *value, size_t s
         return RET_NERRNO(setxattr(fs, name, value, size, flags));
 }
 
-int cg_get_xattr(const char *path, const char *name, void *value, size_t size) {
-        _cleanup_free_ char *fs = NULL;
-        ssize_t n;
-        int r;
-
-        assert(path);
-        assert(name);
-
-        r = cg_get_path(SYSTEMD_CGROUP_CONTROLLER, path, NULL, &fs);
-        if (r < 0)
-                return r;
-
-        n = getxattr(fs, name, value, size);
-        if (n < 0)
-                return -errno;
-
-        return (int) n;
-}
-
-int cg_get_xattr_malloc(const char *path, const char *name, char **ret) {
+int cg_get_xattr_malloc(const char *path, const char *name, char **ret, size_t *ret_size) {
         _cleanup_free_ char *fs = NULL;
         int r;
 
@@ -734,7 +715,7 @@ int cg_get_xattr_malloc(const char *path, const char *name, char **ret) {
         if (r < 0)
                 return r;
 
-        return lgetxattr_malloc(fs, name, ret);
+        return lgetxattr_malloc(fs, name, ret, ret_size);
 }
 
 int cg_get_xattr_bool(const char *path, const char *name) {
@@ -2315,20 +2296,6 @@ static const char* const cgroup_io_limit_type_table[_CGROUP_IO_LIMIT_TYPE_MAX] =
 };
 
 DEFINE_STRING_TABLE_LOOKUP(cgroup_io_limit_type, CGroupIOLimitType);
-
-bool is_cgroup_fs(const struct statfs *s) {
-        return is_fs_type(s, CGROUP_SUPER_MAGIC) ||
-               is_fs_type(s, CGROUP2_SUPER_MAGIC);
-}
-
-bool fd_is_cgroup_fs(int fd) {
-        struct statfs s;
-
-        if (fstatfs(fd, &s) < 0)
-                return -errno;
-
-        return is_cgroup_fs(&s);
-}
 
 static const char *const cgroup_controller_table[_CGROUP_CONTROLLER_MAX] = {
         [CGROUP_CONTROLLER_CPU] = "cpu",

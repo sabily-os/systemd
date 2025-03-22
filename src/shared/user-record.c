@@ -10,6 +10,7 @@
 #include "fs-util.h"
 #include "glyph-util.h"
 #include "hexdecoct.h"
+#include "hostname-setup.h"
 #include "hostname-util.h"
 #include "json-util.h"
 #include "locale-util.h"
@@ -472,7 +473,7 @@ static int json_dispatch_umask(const char *name, sd_json_variant *variant, sd_js
         if (k > 0777)
                 return json_log(variant, flags, SYNTHETIC_ERRNO(EINVAL),
                                 "JSON field '%s' outside of valid range 0%s0777.",
-                                strna(name), special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+                                strna(name), glyph(GLYPH_ELLIPSIS));
 
         *m = (mode_t) k;
         return 0;
@@ -494,7 +495,7 @@ static int json_dispatch_access_mode(const char *name, sd_json_variant *variant,
         if (k > 07777)
                 return json_log(variant, flags, SYNTHETIC_ERRNO(EINVAL),
                                 "JSON field '%s' outside of valid range 0%s07777.",
-                                strna(name), special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+                                strna(name), glyph(GLYPH_ELLIPSIS));
 
         *m = (mode_t) k;
         return 0;
@@ -574,7 +575,7 @@ static int json_dispatch_tasks_or_memory_max(const char *name, sd_json_variant *
         if (k <= 0 || k >= UINT64_MAX)
                 return json_log(variant, flags, SYNTHETIC_ERRNO(ERANGE),
                                 "JSON field '%s' is not in valid range %" PRIu64 "%s%" PRIu64 ".",
-                                strna(name), (uint64_t) 1, special_glyph(SPECIAL_GLYPH_ELLIPSIS), UINT64_MAX-1);
+                                strna(name), (uint64_t) 1, glyph(GLYPH_ELLIPSIS), UINT64_MAX-1);
 
         *limit = k;
         return 0;
@@ -596,7 +597,7 @@ static int json_dispatch_weight(const char *name, sd_json_variant *variant, sd_j
                 return json_log(variant, flags, SYNTHETIC_ERRNO(ERANGE),
                                 "JSON field '%s' is not in valid range %" PRIu64 "%s%" PRIu64 ".",
                                 strna(name), (uint64_t) CGROUP_WEIGHT_MIN,
-                                special_glyph(SPECIAL_GLYPH_ELLIPSIS), (uint64_t) CGROUP_WEIGHT_MAX);
+                                glyph(GLYPH_ELLIPSIS), (uint64_t) CGROUP_WEIGHT_MAX);
 
         *weight = k;
         return 0;
@@ -982,7 +983,7 @@ static int dispatch_rebalance_weight(const char *name, sd_json_variant *variant,
         else
                 return json_log(variant, flags, SYNTHETIC_ERRNO(ERANGE),
                                 "Rebalance weight is out of valid range %" PRIu64 "%s%" PRIu64 ".",
-                                REBALANCE_WEIGHT_MIN, special_glyph(SPECIAL_GLYPH_ELLIPSIS), REBALANCE_WEIGHT_MAX);
+                                REBALANCE_WEIGHT_MIN, glyph(GLYPH_ELLIPSIS), REBALANCE_WEIGHT_MAX);
 
         return 0;
 }
@@ -2716,13 +2717,13 @@ int user_record_test_password_change_required(UserRecord *h) {
         return change_permitted ? 0 : -EROFS;
 }
 
-int user_record_is_root(const UserRecord *u) {
+bool user_record_is_root(const UserRecord *u) {
         assert(u);
 
         return u->uid == 0 || streq_ptr(u->user_name, "root");
 }
 
-int user_record_is_nobody(const UserRecord *u) {
+bool user_record_is_nobody(const UserRecord *u) {
         assert(u);
 
         return u->uid == UID_NOBODY || STRPTR_IN_SET(u->user_name, NOBODY_USER_NAME, "nobody");

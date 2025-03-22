@@ -232,7 +232,7 @@ static int make_home_userns(uid_t stored_uid, uid_t exposed_uid) {
 
         log_debug("Creating userns with mapping:\n%s", text);
 
-        userns_fd = userns_acquire(text, text); /* same uid + gid mapping */
+        userns_fd = userns_acquire(text, text, /* setgroups_deny= */ true); /* same uid + gid mapping */
         if (userns_fd < 0)
                 return log_error_errno(userns_fd, "Failed to allocate user namespace: %m");
 
@@ -302,7 +302,7 @@ int home_shift_uid(int dir_fd, const char *target, uid_t stored_uid, uid_t expos
                 return log_error_errno(errno, "Failed to apply UID/GID map: %m");
 
         log_debug("Applied uidmap mount to %s. Mapping is " UID_FMT " %s " UID_FMT ".",
-                  strna(target), stored_uid, special_glyph(SPECIAL_GLYPH_ARROW_RIGHT), exposed_uid);
+                  strna(target), stored_uid, glyph(GLYPH_ARROW_RIGHT), exposed_uid);
 
         if (ret_mount_fd)
                 *ret_mount_fd = TAKE_FD(mount_fd);

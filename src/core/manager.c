@@ -336,7 +336,7 @@ static int manager_check_ask_password(Manager *m) {
                 if (inotify_fd < 0)
                         return log_error_errno(errno, "Failed to create inotify object: %m");
 
-                (void) mkdir_p_label("/run/systemd/ask-password", 0755);
+                (void) mkdir_label("/run/systemd/ask-password", 0755);
                 r = inotify_add_watch_and_warn(inotify_fd, "/run/systemd/ask-password", IN_CLOSE_WRITE|IN_DELETE|IN_MOVED_TO|IN_ONLYDIR);
                 if (r < 0)
                         return r;
@@ -1047,7 +1047,7 @@ int manager_new(RuntimeScope runtime_scope, ManagerTestRunFlags test_run_flags, 
                         if (r < 0)
                                 return r;
 
-                        r = mkdir_p_label(units_path, 0755);
+                        r = mkdir_label(units_path, 0755);
                 }
                 if (r < 0 && r != -EEXIST)
                         return r;
@@ -1105,7 +1105,6 @@ static int manager_setup_notify(Manager *m) {
                                                m->notify_socket);
                 sa_len = r;
 
-                (void) mkdir_parents_label(m->notify_socket, 0755);
                 (void) sockaddr_un_unlink(&sa.un);
 
                 r = mac_selinux_bind(fd, &sa.sa, sa_len);
@@ -1883,7 +1882,7 @@ static void manager_coldplug(Manager *m) {
 
         assert(m);
 
-        log_debug("Invoking unit coldplug() handlers%s", special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+        log_debug("Invoking unit coldplug() handlers%s", glyph(GLYPH_ELLIPSIS));
 
         /* Let's place the units back into their deserialized state */
         HASHMAP_FOREACH_KEY(u, k, m->units) {
@@ -1904,7 +1903,7 @@ static void manager_catchup(Manager *m) {
 
         assert(m);
 
-        log_debug("Invoking unit catchup() handlers%s", special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+        log_debug("Invoking unit catchup() handlers%s", glyph(GLYPH_ELLIPSIS));
 
         /* Let's catch up on any state changes that happened while we were reloading/reexecing */
         HASHMAP_FOREACH_KEY(u, k, m->units) {
@@ -1968,6 +1967,9 @@ static bool manager_dbus_is_running(Manager *m, bool deserialized) {
 
 static void manager_setup_bus(Manager *m) {
         assert(m);
+
+        if (MANAGER_IS_TEST_RUN(m))
+                return;
 
         /* Let's set up our private bus connection now, unconditionally */
         (void) bus_init_private(m);
@@ -2045,10 +2047,30 @@ void manager_reloading_stopp(Manager **m) {
         }
 }
 
+static int manager_make_runtime_dir(Manager *m) {
+        int r;
+
+        assert(m);
+
+        _cleanup_free_ char *d = path_join(m->prefix[EXEC_DIRECTORY_RUNTIME], "systemd");
+        if (!d)
+                return log_oom();
+
+        r = mkdir_label(d, 0755);
+        if (r < 0 && r != -EEXIST)
+                return log_error_errno(r, "Failed to create directory '%s/': %m", d);
+
+        return 0;
+}
+
 int manager_startup(Manager *m, FILE *serialization, FDSet *fds, const char *root) {
         int r;
 
         assert(m);
+
+        r = manager_make_runtime_dir(m);
+        if (r < 0)
+                return r;
 
         /* If we are running in test mode, we still want to run the generators,
          * but we should not touch the real generator directories. */
@@ -2976,8 +2998,13 @@ static void manager_handle_ctrl_alt_del(Manager *m) {
         if (ratelimit_below(&m->ctrl_alt_del_ratelimit) || m->cad_burst_action == EMERGENCY_ACTION_NONE)
                 manager_start_special(m, SPECIAL_CTRL_ALT_DEL_TARGET, JOB_REPLACE_IRREVERSIBLY);
         else
-                emergency_action(m, m->cad_burst_action, EMERGENCY_ACTION_WARN, NULL, -1,
-                                 "Ctrl-Alt-Del was pressed more than 7 times within 2s");
+                emergency_action(
+                                m,
+                                m->cad_burst_action,
+                                EMERGENCY_ACTION_WARN,
+                                /* reboot_arg= */ NULL,
+                                /* exit_status= */ -1,
+                                "Ctrl-Alt-Del was pressed more than 7 times within 2s");
 }
 
 static int manager_dispatch_signal_fd(sd_event_source *source, int fd, uint32_t revents, void *userdata) {

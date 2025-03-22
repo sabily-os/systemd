@@ -6,6 +6,7 @@
 
 #include "ansi-color.h"
 #include "bus-map-properties.h"
+#include "hostname-setup.h"
 #include "hostname-util.h"
 #include "locale-util.h"
 #include "memory-util.h"
@@ -199,7 +200,7 @@ static int output_machines_list(struct machine_info *machine_infos, unsigned n) 
                         mname = strjoin(strna(m->name), " (host)");
 
                 r = table_add_many(table,
-                                   TABLE_STRING, circle ? special_glyph(SPECIAL_GLYPH_BLACK_CIRCLE) : " ",
+                                   TABLE_STRING, circle ? glyph(GLYPH_BLACK_CIRCLE) : " ",
                                    TABLE_SET_COLOR, on_state,
                                    TABLE_STRING, m->is_host ? mname : strna(m->name),
                                    TABLE_STRING, strna(m->state),

@@ -306,6 +306,19 @@
         </listitem>
       </varlistentry>
 
+      <varlistentry id='version'>
+        <term><varname>Version=</varname></term>
+        <listitem>
+          <para>Checks whether a software version matches a certain expression. See
+          <varname>ConditionVersion=</varname> in
+          <citerefentry><refentrytitle>systemd.unit</refentrytitle><manvolnum>5</manvolnum></citerefentry>
+          for details. When prefixed with an exclamation mark (<literal>!</literal>), the result is negated.
+          If an empty string is assigned, the previously assigned value is cleared.</para>
+
+          <xi:include href="version-info.xml" xpointer="v258"/>
+        </listitem>
+      </varlistentry>
+
       <varlistentry id='credential'>
         <term><varname>Credential=</varname></term>
         <listitem>
@@ -1368,7 +1381,7 @@
 
     <variablelist class='network-directives'>
       <varlistentry>
-        <term><varname>Enabled=</varname></term>
+        <term><varname>Enable=</varname></term>
         <listitem>
           <para>Takes a boolean argument. When true, the Energy Efficient Ethernet (EEE) feature will be
           enabled on the interface. Defaults to unset, and the enablement of EEE will be unchanged.</para>
