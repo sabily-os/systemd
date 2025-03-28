@@ -6,6 +6,7 @@
 #include "device-path-util.h"
 #include "devicetree.h"
 #include "drivers.h"
+#include "efi-string-table.h"
 #include "efivars-fundamental.h"
 #include "efivars.h"
 #include "export-vars.h"
@@ -79,6 +80,21 @@ typedef enum LoaderType {
 /* Whether to persistently save the selected entry in an EFI variable, if that's requested. */
 #define LOADER_TYPE_SAVE_ENTRY(t) IN_SET(t, LOADER_EFI, LOADER_LINUX, LOADER_UKI, LOADER_UKI_URL, LOADER_TYPE2_UKI)
 
+typedef enum {
+        REBOOT_NO,
+        REBOOT_YES,
+        REBOOT_AUTO,
+        _REBOOT_ON_ERROR_MAX,
+} RebootOnError;
+
+static const char *reboot_on_error_table[_REBOOT_ON_ERROR_MAX] = {
+        [REBOOT_NO]   = "no",
+        [REBOOT_YES]  = "yes",
+        [REBOOT_AUTO] = "auto",
+};
+
+DEFINE_PRIVATE_STRING_TABLE_LOOKUP_TO_STRING(reboot_on_error, RebootOnError);
+
 typedef struct BootEntry {
         char16_t *id;         /* The unique identifier for this entry (typically the filename of the file defining the entry, possibly suffixed with a profile id) */
         char16_t *id_without_profile; /* same, but without any profile id suffixed */
@@ -123,6 +139,7 @@ typedef struct {
         bool auto_poweroff;
         bool auto_reboot;
         bool reboot_for_bitlocker;
+        RebootOnError reboot_on_error;
         secure_boot_enroll secure_boot_enroll;
         bool force_menu;
         bool use_saved_entry;
@@ -316,23 +333,8 @@ static void print_status(Config *config, char16_t *loaded_image_path) {
         printf("           auto-reboot: %ls\n", yes_no(config->auto_reboot));
         printf("                  beep: %ls\n", yes_no(config->beep));
         printf("  reboot-for-bitlocker: %ls\n", yes_no(config->reboot_for_bitlocker));
-
-        switch (config->secure_boot_enroll) {
-        case ENROLL_OFF:
-                printf("    secure-boot-enroll: off\n");
-                break;
-        case ENROLL_MANUAL:
-                printf("    secure-boot-enroll: manual\n");
-                break;
-        case ENROLL_IF_SAFE:
-                printf("    secure-boot-enroll: if-safe\n");
-                break;
-        case ENROLL_FORCE:
-                printf("    secure-boot-enroll: force\n");
-                break;
-        default:
-                assert_not_reached();
-        }
+        printf("       reboot-on-error: %s\n",  reboot_on_error_to_string(config->reboot_on_error));
+        printf("    secure-boot-enroll: %s\n",  secure_boot_enroll_to_string(config->secure_boot_enroll));
 
         switch (config->console_mode) {
         case CONSOLE_MODE_AUTO:
@@ -1055,6 +1057,17 @@ static void config_defaults_load_from_file(Config *config, char *content) {
                                 log_error("Error parsing 'reboot-for-bitlocker' config option, ignoring: %s",
                                           value);
 
+                } else if (streq8(key, "reboot-on-error")) {
+                        if (streq8(value, "auto"))
+                                config->reboot_on_error = REBOOT_AUTO;
+                        else {
+                                bool reboot_yes_no;
+                                if (!parse_boolean(value, &reboot_yes_no))
+                                        log_error("Error parsing 'reboot-on-error' config option, ignoring: %s", value);
+                                else
+                                        config->reboot_on_error = reboot_yes_no ? REBOOT_YES : REBOOT_NO;
+                        }
+
                 } else if (streq8(key, "secure-boot-enroll")) {
                         if (streq8(value, "manual"))
                                 config->secure_boot_enroll = ENROLL_MANUAL;
@@ -1421,6 +1434,7 @@ static void config_load_defaults(Config *config, EFI_FILE *root_dir) {
                 .editor = true,
                 .auto_entries = true,
                 .auto_firmware = true,
+                .reboot_on_error = REBOOT_AUTO,
                 .secure_boot_enroll = ENROLL_IF_SAFE,
                 .idx_default_efivar = IDX_INVALID,
                 .console_mode = CONSOLE_MODE_KEEP,
@@ -1800,19 +1814,19 @@ static bool is_sd_boot(EFI_FILE *root_dir, const char16_t *loader_path) {
         if (err != EFI_SUCCESS)
                 return false;
 
-        PeSectionVector vector = {};
+        PeSectionVector vector[1] = {};
         pe_locate_profile_sections(
                         section_table,
                         n_section_table,
                         section_names,
                         /* profile= */ UINT_MAX,
                         /* validate_base= */ 0,
-                        &vector);
-        if (vector.memory_size != STRLEN(SD_MAGIC))
+                        vector);
+        if (vector[0].memory_size != STRLEN(SD_MAGIC))
                 return false;
 
-        err = file_handle_read(handle, vector.file_offset, vector.file_size, &content, &read);
-        if (err != EFI_SUCCESS || vector.file_size != read)
+        err = file_handle_read(handle, vector[0].file_offset, vector[0].file_size, &content, &read);
+        if (err != EFI_SUCCESS || vector[0].file_size != read)
                 return false;
 
         return memcmp(content, SD_MAGIC, STRLEN(SD_MAGIC)) == 0;
@@ -2079,7 +2093,7 @@ static void boot_entry_add_type2(
 
         /* and now iterate through possible profiles, and create a menu item for each profile we find */
         for (unsigned profile = 0; profile < UNIFIED_PROFILES_MAX; profile ++) {
-                PeSectionVector sections[_SECTION_MAX];
+                PeSectionVector sections[_SECTION_MAX] = {};
 
                 /* Start out with the base sections */
                 memcpy(sections, base_sections, sizeof(sections));
@@ -2998,8 +3012,14 @@ static EFI_STATUS run(EFI_HANDLE image) {
                         (void) process_random_seed(root_dir);
 
                 err = ASSERT_PTR(entry->call)(entry, root_dir, image);
-                if (err != EFI_SUCCESS)
+                if (err != EFI_SUCCESS) {
+                        if (config.reboot_on_error == REBOOT_YES || (config.reboot_on_error == REBOOT_AUTO && entry->tries_left > 0)) {
+                                printf("Failed to start boot entry. Rebooting in 5s.\n");
+                                BS->Stall(5 * 1000 * 1000);
+                                (void) call_reboot_system(/* entry= */ NULL, /* root_dir= */ NULL, /* parent_image= */ NULL);
+                        }
                         return err;
+                }
 
                 menu = true;
                 config.timeout_sec = 0;

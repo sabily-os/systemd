@@ -26,6 +26,7 @@
 #include "loopback-setup.h"
 #include "missing_syscall.h"
 #include "mkdir-label.h"
+#include "mount-setup.h"
 #include "mount-util.h"
 #include "mountpoint-util.h"
 #include "namespace-util.h"
@@ -1373,33 +1374,15 @@ static int mount_private_sysfs(const MountEntry *m, const NamespaceParameters *p
         return mount_private_apivfs("sysfs", mount_entry_path(m), "/sys", /* opts = */ NULL, p->runtime_scope);
 }
 
-static bool check_recursiveprot_supported(void) {
-        int r;
-
-        /* memory_recursiveprot is only supported for kernels >= 5.7. Note mount_option_supported uses fsopen()
-         * and fsconfig() which are supported for kernels >= 5.2. So if mount_option_supported() returns an
-         * error, we can assume memory_recursiveprot is not supported. */
-        r = mount_option_supported("cgroup2", "memory_recursiveprot", NULL);
-        if (r < 0)
-                log_debug_errno(r, "Failed to determine whether the 'memory_recursiveprot' mount option is supported, assuming not: %m");
-        else if (r == 0)
-                log_debug("This kernel version does not support 'memory_recursiveprot', not using mount option.");
-
-        return r > 0;
-}
-
 static int mount_private_cgroup2fs(const MountEntry *m, const NamespaceParameters *p) {
         _cleanup_free_ char *opts = NULL;
 
         assert(m);
         assert(p);
 
-        if (check_recursiveprot_supported()) {
-                opts = strdup(strempty(mount_entry_options(m)));
+        if (cgroupfs_recursiveprot_supported()) {
+                opts = strextend_with_separator(NULL, ",", mount_entry_options(m) ?: POINTER_MAX, "memory_recursiveprot");
                 if (!opts)
-                        return -ENOMEM;
-
-                if (!strextend_with_separator(&opts, ",", "memory_recursiveprot"))
                         return -ENOMEM;
         }
 
@@ -1539,7 +1522,7 @@ static int mount_image(
         }
 
         r = verity_dissect_and_mount(
-                        /* src_fd= */ -1,
+                        /* src_fd= */ -EBADF,
                         mount_entry_source(m),
                         mount_entry_path(m),
                         m->image_options_const,
@@ -1649,7 +1632,7 @@ static int follow_symlink(
                                        mount_entry_path(m));
 
         log_debug("Followed mount entry path symlink %s %s %s.",
-                  mount_entry_path(m), special_glyph(SPECIAL_GLYPH_ARROW_RIGHT), target);
+                  mount_entry_path(m), glyph(GLYPH_ARROW_RIGHT), target);
 
         mount_entry_consume_prefix(m, TAKE_PTR(target));
 
@@ -1821,7 +1804,7 @@ static int apply_one_mount(
                         return log_debug_errno(r, "Failed to follow symlinks on %s: %m", mount_entry_source(m));
 
                 log_debug("Followed source symlinks %s %s %s.",
-                          mount_entry_source(m), special_glyph(SPECIAL_GLYPH_ARROW_RIGHT), chased);
+                          mount_entry_source(m), glyph(GLYPH_ARROW_RIGHT), chased);
 
                 free_and_replace(m->source_malloc, chased);
 
@@ -1916,25 +1899,23 @@ static int apply_one_mount(
                 log_debug("Setting an id-mapped mount on %s", mount_entry_path(m));
 
                 /* Do mapping from nobody (in setup_exec_directory()) -> this uid */
-                if (strextendf(&uid_map, UID_FMT " " UID_FMT " " UID_FMT "\n", UID_NOBODY, (uid_t)m->idmap_uid, (uid_t)1u) < 0)
+                if (strextendf(&uid_map, UID_FMT " " UID_FMT " 1\n", UID_NOBODY, m->idmap_uid) < 0)
                         return log_oom();
 
                 /* Consider StateDirectory=xxx aaa xxx:aaa/222
                  * To allow for later symlink creation (by root) in create_symlinks_from_tuples(), map root as well. */
-                if (m->idmap_uid != (uid_t)0) {
-                        if (strextendf(&uid_map, UID_FMT " " UID_FMT " " UID_FMT "\n", (uid_t)0, (uid_t)0, (uid_t)1u) < 0)
+                if (m->idmap_uid != 0)
+                        if (!strextend(&uid_map, "0 0 1\n"))
                                 return log_oom();
-                }
 
-                if (strextendf(&gid_map, GID_FMT " " GID_FMT " " GID_FMT "\n", GID_NOBODY, (gid_t)m->idmap_gid, (gid_t)1u) < 0)
+                if (strextendf(&gid_map, GID_FMT " " GID_FMT " 1\n", GID_NOBODY, m->idmap_gid) < 0)
                         return log_oom();
 
-                if (m->idmap_gid != (gid_t)0) {
-                        if (strextendf(&gid_map, GID_FMT " " GID_FMT " " GID_FMT "\n", (gid_t)0, (gid_t)0, (gid_t)1u) < 0)
+                if (m->idmap_gid != 0)
+                        if (!strextend(&gid_map, "0 0 1\n"))
                                 return log_oom();
-                }
 
-                userns_fd = userns_acquire(uid_map, gid_map);
+                userns_fd = userns_acquire(uid_map, gid_map, /* setgroups_deny= */ true);
                 if (userns_fd < 0)
                         return log_error_errno(userns_fd, "Failed to allocate user namespace: %m");
 

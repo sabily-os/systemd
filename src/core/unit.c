@@ -1821,9 +1821,13 @@ int unit_test_start_limit(Unit *u) {
 
         reason = strjoina("unit ", u->id, " failed");
 
-        emergency_action(u->manager, u->start_limit_action,
-                         EMERGENCY_ACTION_IS_WATCHDOG|EMERGENCY_ACTION_WARN,
-                         u->reboot_arg, -1, reason);
+        emergency_action(
+                        u->manager,
+                        u->start_limit_action,
+                        EMERGENCY_ACTION_IS_WATCHDOG|EMERGENCY_ACTION_WARN|EMERGENCY_ACTION_SLEEP_5S,
+                        u->reboot_arg,
+                        /* exit_status= */ -1,
+                        reason);
 
         return -ECANCELED;
 }
@@ -2710,10 +2714,10 @@ void unit_notify(Unit *u, UnitActiveState os, UnitActiveState ns, bool reload_su
 
                 if (os != UNIT_FAILED && ns == UNIT_FAILED) {
                         reason = strjoina("unit ", u->id, " failed");
-                        emergency_action(m, u->failure_action, 0, u->reboot_arg, unit_failure_action_exit_status(u), reason);
+                        emergency_action(m, u->failure_action, EMERGENCY_ACTION_WARN|EMERGENCY_ACTION_SLEEP_5S, u->reboot_arg, unit_failure_action_exit_status(u), reason);
                 } else if (!UNIT_IS_INACTIVE_OR_FAILED(os) && ns == UNIT_INACTIVE) {
                         reason = strjoina("unit ", u->id, " succeeded");
-                        emergency_action(m, u->success_action, 0, u->reboot_arg, unit_success_action_exit_status(u), reason);
+                        emergency_action(m, u->success_action, /* flags= */ 0, u->reboot_arg, unit_success_action_exit_status(u), reason);
                 }
         }
 
@@ -2816,20 +2820,6 @@ int unit_watch_pidref(Unit *u, const PidRef *pid, bool exclusive) {
         return 0;
 }
 
-int unit_watch_pid(Unit *u, pid_t pid, bool exclusive) {
-        _cleanup_(pidref_done) PidRef pidref = PIDREF_NULL;
-        int r;
-
-        assert(u);
-        assert(pid_is_valid(pid));
-
-        r = pidref_set_pid(&pidref, pid);
-        if (r < 0)
-                return r;
-
-        return unit_watch_pidref(u, &pidref, exclusive);
-}
-
 void unit_unwatch_pidref(Unit *u, const PidRef *pid) {
         assert(u);
         assert(pidref_is_set(pid));
@@ -2877,10 +2867,6 @@ void unit_unwatch_pidref(Unit *u, const PidRef *pid) {
                         assert_se(hashmap_replace(u->manager->watch_pids_more, new_pid3, array) >= 0);
                 }
         }
-}
-
-void unit_unwatch_pid(Unit *u, pid_t pid) {
-        return unit_unwatch_pidref(u, &PIDREF_MAKE_FROM_PID(pid));
 }
 
 void unit_unwatch_all_pids(Unit *u) {
@@ -5120,10 +5106,10 @@ void unit_warn_if_dir_nonempty(Unit *u, const char* where) {
         }
 
         log_unit_struct(u, LOG_NOTICE,
-                        "MESSAGE_ID=" SD_MESSAGE_OVERMOUNTING_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_OVERMOUNTING_STR),
                         LOG_UNIT_INVOCATION_ID(u),
                         LOG_UNIT_MESSAGE(u, "Directory %s to mount over is not empty, mounting anyway.", where),
-                        "WHERE=%s", where);
+                        LOG_ITEM("WHERE=%s", where));
 }
 
 int unit_log_noncanonical_mount_path(Unit *u, const char *where) {
@@ -5132,10 +5118,10 @@ int unit_log_noncanonical_mount_path(Unit *u, const char *where) {
 
         /* No need to mention "." or "..", they would already have been rejected by unit_name_from_path() */
         log_unit_struct(u, LOG_ERR,
-                        "MESSAGE_ID=" SD_MESSAGE_NON_CANONICAL_MOUNT_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_NON_CANONICAL_MOUNT_STR),
                         LOG_UNIT_INVOCATION_ID(u),
                         LOG_UNIT_MESSAGE(u, "Mount path %s is not canonical (contains a symlink).", where),
-                        "WHERE=%s", where);
+                        LOG_ITEM("WHERE=%s", where));
 
         return -ELOOP;
 }
@@ -6060,7 +6046,7 @@ void unit_log_success(Unit *u) {
          * a lot of devices. */
         log_unit_struct(u,
                         MANAGER_IS_USER(u->manager) ? LOG_DEBUG : LOG_INFO,
-                        "MESSAGE_ID=" SD_MESSAGE_UNIT_SUCCESS_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_UNIT_SUCCESS_STR),
                         LOG_UNIT_INVOCATION_ID(u),
                         LOG_UNIT_MESSAGE(u, "Deactivated successfully."));
 }
@@ -6070,10 +6056,10 @@ void unit_log_failure(Unit *u, const char *result) {
         assert(result);
 
         log_unit_struct(u, LOG_WARNING,
-                        "MESSAGE_ID=" SD_MESSAGE_UNIT_FAILURE_RESULT_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_UNIT_FAILURE_RESULT_STR),
                         LOG_UNIT_INVOCATION_ID(u),
                         LOG_UNIT_MESSAGE(u, "Failed with result '%s'.", result),
-                        "UNIT_RESULT=%s", result);
+                        LOG_ITEM("UNIT_RESULT=%s", result));
 }
 
 void unit_log_skip(Unit *u, const char *result) {
@@ -6081,10 +6067,10 @@ void unit_log_skip(Unit *u, const char *result) {
         assert(result);
 
         log_unit_struct(u, LOG_INFO,
-                        "MESSAGE_ID=" SD_MESSAGE_UNIT_SKIPPED_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_UNIT_SKIPPED_STR),
                         LOG_UNIT_INVOCATION_ID(u),
                         LOG_UNIT_MESSAGE(u, "Skipped due to '%s'.", result),
-                        "UNIT_RESULT=%s", result);
+                        LOG_ITEM("UNIT_RESULT=%s", result));
 }
 
 void unit_log_process_exit(
@@ -6112,7 +6098,7 @@ void unit_log_process_exit(
                 level = LOG_WARNING;
 
         log_unit_struct(u, level,
-                        "MESSAGE_ID=" SD_MESSAGE_UNIT_PROCESS_EXIT_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_UNIT_PROCESS_EXIT_STR),
                         LOG_UNIT_MESSAGE(u, "%s exited, code=%s, status=%i/%s%s",
                                          kind,
                                          sigchld_code_to_string(code), status,
@@ -6120,9 +6106,9 @@ void unit_log_process_exit(
                                                ? exit_status_to_string(status, EXIT_STATUS_FULL)
                                                : signal_to_string(status)),
                                          success ? " (success)" : ""),
-                        "EXIT_CODE=%s", sigchld_code_to_string(code),
-                        "EXIT_STATUS=%i", status,
-                        "COMMAND=%s", strna(command),
+                        LOG_ITEM("EXIT_CODE=%s", sigchld_code_to_string(code)),
+                        LOG_ITEM("EXIT_STATUS=%i", status),
+                        LOG_ITEM("COMMAND=%s", strna(command)),
                         LOG_UNIT_INVOCATION_ID(u));
 }
 

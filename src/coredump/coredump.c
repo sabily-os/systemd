@@ -304,7 +304,7 @@ static const char *coredump_tmpfile_name(const char *s) {
         return s ?: "(unnamed temporary file)";
 }
 
-static int fix_permissions(
+static int fix_permissions_and_link(
                 int fd,
                 const char *filename,
                 const char *target,
@@ -329,21 +329,30 @@ static int fix_permissions(
         return 0;
 }
 
-static int maybe_remove_external_coredump(const char *filename, uint64_t size) {
+static int maybe_remove_external_coredump(
+                const Context *c,
+                const char *filename,
+                uint64_t size) {
 
-        /* Returns 1 if might remove, 0 if will not remove, < 0 on error. */
+        assert(c);
+
+        /* Returns true if might remove, false if will not remove, < 0 on error. */
+
+        if (arg_storage != COREDUMP_STORAGE_NONE &&
+            (c->is_pid1 || c->is_journald)) /* Always keep around in case of journald/pid1, since we cannot rely on the journal to accept them */
+                return false;
 
         if (arg_storage == COREDUMP_STORAGE_EXTERNAL &&
             size <= arg_external_size_max)
-                return 0;
+                return false;
 
         if (!filename)
-                return 1;
+                return true;
 
         if (unlink(filename) < 0 && errno != ENOENT)
                 return log_error_errno(errno, "Failed to unlink %s: %m", filename);
 
-        return 1;
+        return true;
 }
 
 static int make_filename(const Context *context, char **ret) {
@@ -595,7 +604,7 @@ static int save_external_coredump(
                         uncompressed_size += partial_uncompressed_size;
                 }
 
-                r = fix_permissions(fd_compressed, tmp_compressed, fn_compressed, context, allow_user);
+                r = fix_permissions_and_link(fd_compressed, tmp_compressed, fn_compressed, context, allow_user);
                 if (r < 0)
                         return r;
 
@@ -606,11 +615,10 @@ static int save_external_coredump(
 
                 *ret_filename = TAKE_PTR(fn_compressed);       /* compressed */
                 *ret_node_fd = TAKE_FD(fd_compressed);         /* compressed */
-                *ret_compressed_size = (uint64_t) st.st_size;  /* compressed */
                 *ret_data_fd = TAKE_FD(fd);
                 *ret_size = uncompressed_size;
+                *ret_compressed_size = (uint64_t) st.st_size;  /* compressed */
                 *ret_truncated = truncated;
-                tmp_compressed = mfree(tmp_compressed);
 
                 return 0;
         }
@@ -619,10 +627,10 @@ static int save_external_coredump(
         if (truncated)
                 log_struct(LOG_INFO,
                            LOG_MESSAGE("Core file was truncated to %"PRIu64" bytes.", max_size),
-                           "SIZE_LIMIT=%"PRIu64, max_size,
-                           "MESSAGE_ID=" SD_MESSAGE_TRUNCATED_CORE_STR);
+                           LOG_ITEM("SIZE_LIMIT=%"PRIu64, max_size),
+                           LOG_MESSAGE_ID(SD_MESSAGE_TRUNCATED_CORE_STR));
 
-        r = fix_permissions(fd, tmp, fn, context, allow_user);
+        r = fix_permissions_and_link(fd, tmp, fn, context, allow_user);
         if (r < 0)
                 return log_error_errno(r, "Failed to fix permissions and finalize coredump %s into %s: %m", coredump_tmpfile_name(tmp), fn);
 
@@ -633,8 +641,10 @@ static int save_external_coredump(
                 return log_error_errno(errno, "Failed to seek on coredump %s: %m", fn);
 
         *ret_filename = TAKE_PTR(fn);
+        *ret_node_fd = -EBADF;
         *ret_data_fd = TAKE_FD(fd);
         *ret_size = (uint64_t) st.st_size;
+        *ret_compressed_size = UINT64_MAX;
         *ret_truncated = truncated;
 
         return 0;
@@ -860,7 +870,10 @@ static int submit_coredump(
                 /* If we don't want to keep the coredump on disk, remove it now, as later on we
                  * will lack the privileges for it. However, we keep the fd to it, so that we can
                  * still process it and log it. */
-                r = maybe_remove_external_coredump(filename, coredump_node_fd >= 0 ? coredump_compressed_size : coredump_size);
+                r = maybe_remove_external_coredump(
+                                context,
+                                filename,
+                                coredump_node_fd >= 0 ? coredump_compressed_size : coredump_size);
                 if (r < 0)
                         return r;
                 if (r == 0)
@@ -1399,28 +1412,28 @@ static int gather_pid_metadata_from_procfs(struct iovec_wrapper *iovw, Context *
                 (void) iovw_put_string_field_free(iovw, "COREDUMP_OPEN_FDS=", t);
 
         p = procfs_file_alloca(pid, "status");
-        if (read_full_virtual_file(p, &t, NULL) >= 0)
+        if (read_full_file(p, &t, /* ret_size= */ NULL) >= 0)
                 (void) iovw_put_string_field_free(iovw, "COREDUMP_PROC_STATUS=", t);
 
         p = procfs_file_alloca(pid, "maps");
-        if (read_full_virtual_file(p, &t, NULL) >= 0)
+        if (read_full_file(p, &t, /* ret_size= */ NULL) >= 0)
                 (void) iovw_put_string_field_free(iovw, "COREDUMP_PROC_MAPS=", t);
 
-        p = procfs_file_alloca(pid, "limits");
-        if (read_full_virtual_file(p, &t, NULL) >= 0)
+        p = procfs_file_alloca(pid, "limits"); /* this uses 'seq_file' in kernel, use read_full_file_at() */
+        if (read_full_file(p, &t, /* ret_size= */ NULL) >= 0)
                 (void) iovw_put_string_field_free(iovw, "COREDUMP_PROC_LIMITS=", t);
 
         p = procfs_file_alloca(pid, "cgroup");
-        if (read_full_virtual_file(p, &t, NULL) >= 0)
+        if (read_full_file(p, &t, /* ret_size= */ NULL) >= 0)
                 (void) iovw_put_string_field_free(iovw, "COREDUMP_PROC_CGROUP=", t);
 
         p = procfs_file_alloca(pid, "mountinfo");
-        if (read_full_virtual_file(p, &t, NULL) >= 0)
+        if (read_full_file(p, &t, /* ret_size= */ NULL) >= 0)
                 (void) iovw_put_string_field_free(iovw, "COREDUMP_PROC_MOUNTINFO=", t);
 
         /* We attach /proc/auxv here. ELF coredumps also contain a note for this (NT_AUXV), see elf(5). */
         p = procfs_file_alloca(pid, "auxv");
-        if (read_full_virtual_file(p, &t, &size) >= 0) {
+        if (read_full_file(p, &t, &size) >= 0) {
                 char *buf = malloc(strlen("COREDUMP_PROC_AUXV=") + size + 1);
                 if (buf) {
                         /* Add a dummy terminator to make context_parse_iovw() happy. */

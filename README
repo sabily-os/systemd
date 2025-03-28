@@ -52,7 +52,8 @@ REQUIREMENTS:
            # FIXME: actually drop compat glue before v258
 
         Linux kernel ≥ 5.6 for getrandom() GRND_INSECURE
-                     ≥ 5.7 for CLONE_INTO_CGROUP, BPF links and the BPF LSM hook
+                     ≥ 5.7 for CLONE_INTO_CGROUP, cgroup2fs memory_recursiveprot option,
+                               BPF links and the BPF LSM hook
 
         ⚠️ Kernel versions below 5.7 ("recommended baseline") have significant gaps
            in functionality and are not recommended for use with this version
@@ -311,14 +312,6 @@ REQUIREMENTS:
         (i.e.: from the initrd). For more information see:
         https://systemd.io/SEPARATE_USR_IS_BROKEN
         https://systemd.io/THE_CASE_FOR_THE_USR_MERGE
-
-        Additional packages are necessary to run some tests:
-        - nc                 (used by test/TEST-12-ISSUE-3171)
-        - python             (test-udev which is installed is in python)
-        - python-pyparsing
-        - python-evdev       (used by hwdb parsing tests)
-        - strace             (used by test/test-functions)
-        - capsh              (optional, used by test-execute)
 
 POLICY FOR SUPPORT OF DISTRIBUTIONS AND ARCHITECTURES:
         systemd main branch and latest major or stable releases are generally

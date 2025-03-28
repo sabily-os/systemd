@@ -55,12 +55,12 @@ sanitize_address_undefined = custom_target(
         'sanitize-address-undefined-fuzzers',
         output : 'sanitize-address-undefined-fuzzers',
         command : [meson_build_sh,
-                   project_source_root,
+                   meson.project_source_root(),
                    '@OUTPUT@',
                    'fuzzers',
                    ' '.join(fuzz_c_args + '-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION'),
                    ' '.join(fuzz_cpp_args + '-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION'),
-                   '-Dfuzz-tests=true -Db_lundef=false -Db_sanitize=address,undefined --optimization=@0@ @1@ --auto-features=@2@'.format(
+                   '-Dfuzz-tests=true -Db_lundef=false -Db_sanitize=address,undefined -Dnspawn=enabled --optimization=@0@ @1@ --auto-features=@2@'.format(
                            get_option('optimization'),
                            get_option('werror') ? '--werror' : '',
                            sanitize_auto_features
@@ -71,13 +71,13 @@ sanitize_address_undefined = custom_target(
 fuzz_sanitizers = [['address,undefined', sanitize_address_undefined]]
 fuzz_testsdir = 'test/fuzz'
 
-if git.found() and fs.is_dir(project_source_root / '.git')
+if git.found() and fs.is_dir(meson.project_source_root() / '.git')
         out = run_command(env, '-u', 'GIT_WORK_TREE',
-                          git, '--git-dir=@0@/.git'.format(project_source_root),
+                          git, '--git-dir=@0@/.git'.format(meson.project_source_root()),
                           'ls-files', ':/@0@/*/*'.format(fuzz_testsdir),
                           check: true)
 else
-        out = run_command(sh, '-c', 'cd "@0@"; echo @1@/*/*'.format(project_source_root, fuzz_testsdir), check: true)
+        out = run_command(sh, '-c', 'cd "@0@"; echo @1@/*/*'.format(meson.project_source_root(), fuzz_testsdir), check: true)
 endif
 
 # Add crafted fuzz inputs we have in the repo

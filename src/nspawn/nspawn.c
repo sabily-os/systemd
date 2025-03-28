@@ -236,6 +236,7 @@ static Architecture arg_architecture = _ARCHITECTURE_INVALID;
 static ImagePolicy *arg_image_policy = NULL;
 static char *arg_background = NULL;
 static bool arg_privileged = false;
+static bool arg_cleanup = false;
 
 STATIC_DESTRUCTOR_REGISTER(arg_directory, freep);
 STATIC_DESTRUCTOR_REGISTER(arg_template, freep);
@@ -327,6 +328,8 @@ static int help(void) {
                "  -q --quiet                Do not show status information\n"
                "     --no-pager             Do not pipe output into a pager\n"
                "     --settings=BOOLEAN     Load additional settings from .nspawn file\n"
+               "     --cleanup              Clean up left-over mounts and underlying mount\n"
+               "                            points used by the container\n"
                "\n%3$sImage:%4$s\n"
                "  -D --directory=PATH       Root directory for the container\n"
                "     --template=PATH        Initialize root directory from template directory,\n"
@@ -751,6 +754,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_SUPPRESS_SYNC,
                 ARG_IMAGE_POLICY,
                 ARG_BACKGROUND,
+                ARG_CLEANUP,
         };
 
         static const struct option options[] = {
@@ -826,6 +830,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "suppress-sync",          required_argument, NULL, ARG_SUPPRESS_SYNC          },
                 { "image-policy",           required_argument, NULL, ARG_IMAGE_POLICY           },
                 { "background",             required_argument, NULL, ARG_BACKGROUND             },
+                { "cleanup",                no_argument,       NULL, ARG_CLEANUP                },
                 {}
         };
 
@@ -1607,6 +1612,10 @@ static int parse_argv(int argc, char *argv[]) {
                         r = free_and_strdup_warn(&arg_background, optarg);
                         if (r < 0)
                                 return r;
+                        break;
+
+                case ARG_CLEANUP:
+                        arg_cleanup = true;
                         break;
 
                 case '?':
@@ -3328,6 +3337,8 @@ static int inner_child(
                 (char*) "PATH=" DEFAULT_PATH_COMPAT,
                 NULL, /* container */
                 NULL, /* TERM */
+                NULL, /* COLORTERM */
+                NULL, /* NO_COLOR */
                 NULL, /* HOME */
                 NULL, /* USER */
                 NULL, /* LOGNAME */
@@ -3579,9 +3590,17 @@ static int inner_child(
         /* LXC sets container=lxc, so follow the scheme here */
         envp[n_env++] = strjoina("container=", arg_container_service_name);
 
-        /* Propagate $TERM unless we are invoked in pipe mode and stdin/stdout/stderr don't refer to a TTY */
-        const char *term = (arg_console_mode != CONSOLE_PIPE || on_tty()) ? strv_find_prefix(environ, "TERM=") : NULL;
-        envp[n_env++] = (char*) (term ?: "TERM=dumb");
+        /* Propagate $TERM & Co. unless we are invoked in pipe mode and stdin/stdout/stderr don't refer to a TTY */
+        if (arg_console_mode != CONSOLE_PIPE || on_tty()) {
+                FOREACH_STRING(v, "TERM=", "COLORTERM=", "NO_COLOR=") {
+                        char *t = strv_find_prefix(environ, v);
+                        if (!t)
+                                continue;
+
+                        envp[n_env++] = t;
+                }
+        } else
+                envp[n_env++] = (char*) "TERM=dumb";
 
         if (home || !uid_is_valid(arg_uid) || arg_uid == 0)
                 if (asprintf(envp + n_env++, "HOME=%s", home ?: "/root") < 0)
@@ -4681,7 +4700,7 @@ static void set_window_title(PTYForward *f) {
         (void) gethostname_strict(&hn);
 
         if (emoji_enabled())
-                dot = strjoin(special_glyph(SPECIAL_GLYPH_BLUE_CIRCLE), " ");
+                dot = strjoin(glyph(GLYPH_BLUE_CIRCLE), " ");
 
         if (hn)
                 (void) pty_forward_set_titlef(f, "%sContainer %s on %s", strempty(dot), arg_machine, hn);
@@ -5440,7 +5459,7 @@ static int run_container(
                         } else {
                                 _cleanup_free_ char *host_ifname = NULL;
 
-                                r = nsresource_add_netif(userns_fd, child_netns_fd, /* namespace_ifname= */ NULL, &host_ifname, /* ret_namespace_ifname= */ NULL);
+                                r = nsresource_add_netif_veth(userns_fd, child_netns_fd, /* namespace_ifname= */ NULL, &host_ifname, /* ret_namespace_ifname= */ NULL);
                                 if (r < 0)
                                         return log_error_errno(r, "Failed to add network interface to container: %m");
 
@@ -5919,11 +5938,39 @@ static void initialize_defaults(void) {
         arg_private_network = !arg_privileged;
 }
 
+static void cleanup_propagation_and_export_directories(void) {
+        const char *p;
+
+        if (!arg_machine || !arg_privileged)
+                return;
+
+        p = strjoina("/run/systemd/nspawn/propagate/", arg_machine);
+        (void) rm_rf(p, REMOVE_ROOT);
+
+        p = strjoina("/run/systemd/nspawn/unix-export/", arg_machine);
+        (void) umount2(p, MNT_DETACH|UMOUNT_NOFOLLOW);
+        (void) rmdir(p);
+}
+
+static int do_cleanup(void) {
+        int r;
+
+        if (arg_ephemeral)
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot specify --ephemeral with --cleanup.");
+
+        r = determine_names();
+        if (r < 0)
+                return r;
+
+        cleanup_propagation_and_export_directories();
+        return 0;
+}
+
 static int run(int argc, char *argv[]) {
         bool remove_directory = false, remove_image = false, veth_created = false;
         _cleanup_close_ int master = -EBADF, userns_fd = -EBADF, mount_fd = -EBADF;
         _cleanup_fdset_free_ FDSet *fds = NULL;
-        int r, n_fd_passed, ret = EXIT_SUCCESS;
+        int r, ret = EXIT_SUCCESS;
         char veth_name[IFNAMSIZ] = "";
         struct ExposeArgs expose_args = {};
         _cleanup_(release_lock_file) LockFile tree_global_lock = LOCK_FILE_INIT, tree_local_lock = LOCK_FILE_INIT;
@@ -5940,6 +5987,9 @@ static int run(int argc, char *argv[]) {
         r = parse_argv(argc, argv);
         if (r <= 0)
                 goto finish;
+
+        if (arg_cleanup)
+                return do_cleanup();
 
         r = cant_be_in_netns();
         if (r < 0)
@@ -6007,13 +6057,10 @@ static int run(int argc, char *argv[]) {
          * so just turning this off here means we only turn it off in nspawn itself, not any children. */
         (void) ignore_signals(SIGPIPE);
 
-        n_fd_passed = sd_listen_fds(false);
-        if (n_fd_passed > 0) {
-                r = fdset_new_listen_fds(&fds, false);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to collect file descriptors: %m");
-                        goto finish;
-                }
+        r = fdset_new_listen_fds(&fds, /* unset = */ false);
+        if (r < 0) {
+                log_error_errno(r, "Failed to collect file descriptors: %m");
+                goto finish;
         }
 
         /* The "default" umask. This is appropriate for most file and directory
@@ -6394,13 +6441,13 @@ static int run(int argc, char *argv[]) {
                 (void) terminal_urlify_path(t, t, &u);
 
                 log_info("%s %sSpawning container %s on %s.%s",
-                         special_glyph(SPECIAL_GLYPH_LIGHT_SHADE), ansi_grey(), arg_machine, u ?: t, ansi_normal());
+                         glyph(GLYPH_LIGHT_SHADE), ansi_grey(), arg_machine, u ?: t, ansi_normal());
 
                 if (arg_console_mode == CONSOLE_INTERACTIVE)
                         log_info("%s %sPress %sCtrl-]%s three times within 1s to kill container; two times followed by %sr%s\n"
                                  "%s %sto reboot container; two times followed by %sp%s to poweroff container.%s",
-                                 special_glyph(SPECIAL_GLYPH_LIGHT_SHADE), ansi_grey(), ansi_highlight(), ansi_grey(), ansi_highlight(), ansi_normal(),
-                                 special_glyph(SPECIAL_GLYPH_LIGHT_SHADE), ansi_grey(), ansi_highlight(), ansi_grey(), ansi_normal());
+                                 glyph(GLYPH_LIGHT_SHADE), ansi_grey(), ansi_highlight(), ansi_grey(), ansi_highlight(), ansi_normal(),
+                                 glyph(GLYPH_LIGHT_SHADE), ansi_grey(), ansi_highlight(), ansi_grey(), ansi_normal());
         }
 
         assert_se(sigprocmask_many(SIG_BLOCK, NULL, SIGCHLD, SIGWINCH, SIGTERM, SIGINT, SIGRTMIN+18) >= 0);
@@ -6475,6 +6522,8 @@ finish:
                 (void) umount2(p, MNT_DETACH|UMOUNT_NOFOLLOW);
                 (void) rmdir(p);
         }
+
+        cleanup_propagation_and_export_directories();
 
         expose_port_flush(&fw_ctx, arg_expose_ports, AF_INET,  &expose_args.address4);
         expose_port_flush(&fw_ctx, arg_expose_ports, AF_INET6, &expose_args.address6);

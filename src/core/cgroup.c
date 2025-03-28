@@ -54,6 +54,8 @@
  * out specific attributes from us. */
 #define LOG_LEVEL_CGROUP_WRITE(r) (IN_SET(abs(r), ENOENT, EROFS, EACCES, EPERM) ? LOG_DEBUG : LOG_WARNING)
 
+static void unit_remove_from_cgroup_empty_queue(Unit *u);
+
 uint64_t cgroup_tasks_max_resolve(const CGroupTasksMax *tasks_max) {
         if (tasks_max->scale == 0)
                 return tasks_max->value;
@@ -3072,6 +3074,10 @@ int unit_attach_pids_to_cgroup(Unit *u, Set *pids, const char *suffix_path) {
                                 else {
                                         if (ret >= 0)
                                                 ret++; /* Count successful additions */
+
+                                        /* the cgroup is definitely not empty now, in case the unit was in
+                                         * the cgroup empty queue, drop it from there */
+                                        unit_remove_from_cgroup_empty_queue(u);
                                         continue; /* When the bus thing worked via the bus we are fully done for this PID. */
                                 }
                         }
@@ -3080,8 +3086,10 @@ int unit_attach_pids_to_cgroup(Unit *u, Set *pids, const char *suffix_path) {
                                 ret = r; /* Remember first error */
 
                         continue;
-                } else if (ret >= 0)
+                } else if (ret >= 0) {
+                        unit_remove_from_cgroup_empty_queue(u);
                         ret++; /* Count successful additions */
+                }
 
                 r = cg_all_unified();
                 if (r < 0)
@@ -3968,10 +3976,10 @@ int unit_check_oomd_kill(Unit *u) {
         r = cg_all_unified();
         if (r < 0)
                 return log_unit_debug_errno(u, r, "Couldn't determine whether we are in all unified mode: %m");
-        else if (r == 0)
+        if (r == 0)
                 return 0;
 
-        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_ooms", &value);
+        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_ooms", &value, /* ret_size= */ NULL);
         if (r < 0 && !ERRNO_IS_XATTR_ABSENT(r))
                 return r;
 
@@ -3989,19 +3997,19 @@ int unit_check_oomd_kill(Unit *u) {
 
         n = 0;
         value = mfree(value);
-        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_kill", &value);
+        r = cg_get_xattr_malloc(crt->cgroup_path, "user.oomd_kill", &value, /* ret_size= */ NULL);
         if (r >= 0 && !isempty(value))
                 (void) safe_atou64(value, &n);
 
         if (n > 0)
                 log_unit_struct(u, LOG_NOTICE,
-                                "MESSAGE_ID=" SD_MESSAGE_UNIT_OOMD_KILL_STR,
+                                LOG_MESSAGE_ID(SD_MESSAGE_UNIT_OOMD_KILL_STR),
                                 LOG_UNIT_INVOCATION_ID(u),
                                 LOG_UNIT_MESSAGE(u, "systemd-oomd killed %"PRIu64" process(es) in this unit.", n),
-                                "N_PROCESSES=%" PRIu64, n);
+                                LOG_ITEM("N_PROCESSES=%" PRIu64, n));
         else
                 log_unit_struct(u, LOG_NOTICE,
-                                "MESSAGE_ID=" SD_MESSAGE_UNIT_OOMD_KILL_STR,
+                                LOG_MESSAGE_ID(SD_MESSAGE_UNIT_OOMD_KILL_STR),
                                 LOG_UNIT_INVOCATION_ID(u),
                                 LOG_UNIT_MESSAGE(u, "systemd-oomd killed some process(es) in this unit."));
 
@@ -4043,7 +4051,7 @@ int unit_check_oom(Unit *u) {
                 return 0;
 
         log_unit_struct(u, LOG_NOTICE,
-                        "MESSAGE_ID=" SD_MESSAGE_UNIT_OUT_OF_MEMORY_STR,
+                        LOG_MESSAGE_ID(SD_MESSAGE_UNIT_OUT_OF_MEMORY_STR),
                         LOG_UNIT_INVOCATION_ID(u),
                         LOG_UNIT_MESSAGE(u, "A process of this unit has been killed by the OOM killer."));
 
@@ -4463,7 +4471,7 @@ Unit *manager_get_unit_by_pidref_cgroup(Manager *m, const PidRef *pid) {
         return manager_get_unit_by_cgroup(m, cgroup);
 }
 
-Unit *manager_get_unit_by_pidref_watching(Manager *m, const PidRef *pid) {
+Unit* manager_get_unit_by_pidref_watching(Manager *m, const PidRef *pid) {
         Unit *u, **array;
 
         assert(m);
@@ -4509,15 +4517,6 @@ Unit* manager_get_unit_by_pidref(Manager *m, PidRef *pid) {
                 return u;
 
         return NULL;
-}
-
-Unit *manager_get_unit_by_pid(Manager *m, pid_t pid) {
-        assert(m);
-
-        if (!pid_is_valid(pid))
-                return NULL;
-
-        return manager_get_unit_by_pidref(m, &PIDREF_MAKE_FROM_PID(pid));
 }
 
 int manager_notify_cgroup_empty(Manager *m, const char *cgroup) {
@@ -5214,6 +5213,7 @@ static int unit_cgroup_freezer_kernel_state(Unit *u, FreezerState *ret) {
 int unit_cgroup_freezer_action(Unit *u, FreezerAction action) {
         _cleanup_free_ char *path = NULL;
         FreezerState current, next, objective;
+        bool action_in_progress = false;
         int r;
 
         assert(u);
@@ -5228,14 +5228,21 @@ int unit_cgroup_freezer_action(Unit *u, FreezerAction action) {
         CGroupRuntime *crt = unit_get_cgroup_runtime(u);
         if (!crt || !crt->cgroup_path)
                 /* No realized cgroup = nothing to freeze */
-                goto skip;
+                goto finish;
 
         r = unit_cgroup_freezer_kernel_state(u, &current);
         if (r < 0)
                 return r;
 
-        if (current == objective)
-                goto skip;
+        if (current == objective) {
+                if (objective == FREEZER_FROZEN)
+                        goto finish;
+
+                /* Skip thaw only if no freeze operation was in flight */
+                if (IN_SET(u->freezer_state, FREEZER_RUNNING, FREEZER_THAWING))
+                        goto finish;
+        } else
+                action_in_progress = true;
 
         if (next == freezer_state_finish(next)) {
                 /* We're directly transitioning into a finished state, which in theory means that
@@ -5267,12 +5274,13 @@ int unit_cgroup_freezer_action(Unit *u, FreezerAction action) {
         if (r < 0)
                 return r;
 
-        unit_set_freezer_state(u, next);
-        return 1; /* Wait for cgroup event before replying */
+finish:
+        if (action_in_progress)
+                unit_set_freezer_state(u, next);
+        else
+                unit_set_freezer_state(u, freezer_state_finish(next));
 
-skip:
-        unit_set_freezer_state(u, freezer_state_finish(next));
-        return 0;
+        return action_in_progress;
 }
 
 int unit_get_cpuset(Unit *u, CPUSet *cpus, const char *name) {

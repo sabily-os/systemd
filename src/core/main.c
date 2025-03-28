@@ -1558,8 +1558,6 @@ static int bump_unix_max_dgram_qlen(void) {
 }
 
 static int fixup_environment(void) {
-        _cleanup_free_ char *term = NULL;
-        const char *t;
         int r;
 
         /* Only fix up the environment when we are started as PID 1 */
@@ -1575,19 +1573,29 @@ static int fixup_environment(void) {
          * not have support for color mode for example.
          *
          * However if TERM was configured through the kernel command line then leave it alone. */
+        _cleanup_free_ char *term = NULL;
         r = proc_cmdline_get_key("TERM", 0, &term);
         if (r < 0)
                 return r;
-
-        if (r == 0) {
+        if (r > 0) {
+                /* If we pick up $TERM, then also pick up $COLORTERM, $NO_COLOR */
+                FOREACH_STRING(v, "COLORTERM", "NO_COLOR") {
+                        _cleanup_free_ char *vv = NULL;
+                        r = proc_cmdline_get_key(v, 0, &vv);
+                        if (r < 0)
+                                return r;
+                        if (r > 0 && setenv(v, vv, /* overwrite= */ true) < 0)
+                                return -errno;
+                }
+        } else {
+                /* If no $TERM is set then look for the per-tty variable instead */
                 r = proc_cmdline_get_key("systemd.tty.term.console", 0, &term);
                 if (r < 0)
                         return r;
         }
 
-        t = term ?: default_term_for_tty("/dev/console");
-
-        if (setenv("TERM", t, 1) < 0)
+        const char *t = term ?: default_term_for_tty("/dev/console");
+        if (setenv("TERM", t, /* overwrite= */ true) < 0)
                 return -errno;
 
         /* The kernels sets HOME=/ for init. Let's undo this. */
@@ -1977,9 +1985,9 @@ static int do_reexecute(
         assert(saved_rlimit_memlock);
         assert(ret_error_message);
 
-        /* Close and disarm the watchdog, so that the new instance can reinitialize it, but doesn't get
-         * rebooted while we do that */
-        watchdog_close(true);
+        /* Close and disarm the watchdog, so that the new instance can reinitialize it, but the machine
+         * doesn't get rebooted while we do that. */
+        watchdog_close(/* disarm= */ true);
 
         if (!switch_root_dir && objective == MANAGER_SOFT_REBOOT) {
                 /* If no switch root dir is specified, then check if /run/nextroot/ qualifies and use that */
@@ -2170,7 +2178,7 @@ static int invoke_main_loop(
                         *ret_error_message = "Failed to run main loop";
                         return log_struct_errno(LOG_EMERG, objective,
                                                 LOG_MESSAGE("Failed to run main loop: %m"),
-                                                "MESSAGE_ID=" SD_MESSAGE_CORE_MAINLOOP_FAILED_STR);
+                                                LOG_MESSAGE_ID(SD_MESSAGE_CORE_MAINLOOP_FAILED_STR));
                 }
 
                 /* Ensure shutdown timestamp is taken even when bypassing the job engine */
@@ -2453,12 +2461,11 @@ static int initialize_runtime(
                         (void) import_credentials();
 
                         (void) os_release_status();
-                        (void) hostname_setup(/* really = */ true);
                         (void) machine_id_setup(/* root = */ NULL, arg_machine_id,
                                                 (first_boot ? MACHINE_ID_SETUP_FORCE_TRANSIENT : 0) |
                                                 (arg_machine_id_from_firmware ? MACHINE_ID_SETUP_FORCE_FIRMWARE : 0),
                                                 /* ret_machine_id = */ NULL);
-
+                        (void) hostname_setup(/* really = */ true);
                         (void) loopback_setup();
 
                         bump_unix_max_dgram_qlen();
@@ -2485,7 +2492,7 @@ static int initialize_runtime(
                                 *ret_error_message = "Failed to drop capability bounding set of usermode helpers";
                                 return log_struct_errno(LOG_EMERG, r,
                                                         LOG_MESSAGE("Failed to drop capability bounding set of usermode helpers: %m"),
-                                                        "MESSAGE_ID=" SD_MESSAGE_CORE_CAPABILITY_BOUNDING_USER_STR);
+                                                        LOG_MESSAGE_ID(SD_MESSAGE_CORE_CAPABILITY_BOUNDING_USER_STR));
                         }
 
                         r = capability_bounding_set_drop(arg_capability_bounding_set, true);
@@ -2493,7 +2500,7 @@ static int initialize_runtime(
                                 *ret_error_message = "Failed to drop capability bounding set";
                                 return log_struct_errno(LOG_EMERG, r,
                                                         LOG_MESSAGE("Failed to drop capability bounding set: %m"),
-                                                        "MESSAGE_ID=" SD_MESSAGE_CORE_CAPABILITY_BOUNDING_STR);
+                                                        LOG_MESSAGE_ID(SD_MESSAGE_CORE_CAPABILITY_BOUNDING_STR));
                         }
                 }
 
@@ -2502,7 +2509,7 @@ static int initialize_runtime(
                                 *ret_error_message = "Failed to disable new privileges";
                                 return log_struct_errno(LOG_EMERG, errno,
                                                         LOG_MESSAGE("Failed to disable new privileges: %m"),
-                                                        "MESSAGE_ID=" SD_MESSAGE_CORE_DISABLE_PRIVILEGES_STR);
+                                                        LOG_MESSAGE_ID(SD_MESSAGE_CORE_DISABLE_PRIVILEGES_STR));
                         }
                 }
 
@@ -2519,7 +2526,7 @@ static int initialize_runtime(
                         *ret_error_message = "$XDG_RUNTIME_DIR is not set";
                         return log_struct_errno(LOG_EMERG, r,
                                                 LOG_MESSAGE("Failed to determine $XDG_RUNTIME_DIR path: %m"),
-                                                "MESSAGE_ID=" SD_MESSAGE_CORE_NO_XDGDIR_PATH_STR);
+                                                LOG_MESSAGE_ID(SD_MESSAGE_CORE_NO_XDGDIR_PATH_STR));
                 }
 
                 if (!skip_setup) {
@@ -2628,14 +2635,14 @@ static int do_queue_default_job(
                         *ret_error_message = "Failed to start default target";
                         return log_struct_errno(LOG_EMERG, r,
                                                 LOG_MESSAGE("Failed to start default target: %s", bus_error_message(&error, r)),
-                                                "MESSAGE_ID=" SD_MESSAGE_CORE_START_TARGET_FAILED_STR);
+                                                LOG_MESSAGE_ID(SD_MESSAGE_CORE_START_TARGET_FAILED_STR));
                 }
 
         } else if (r < 0) {
                 *ret_error_message = "Failed to isolate default target";
                 return log_struct_errno(LOG_EMERG, r,
                                         LOG_MESSAGE("Failed to isolate default target: %s", bus_error_message(&error, r)),
-                                        "MESSAGE_ID=" SD_MESSAGE_CORE_ISOLATE_TARGET_FAILED_STR);
+                                        LOG_MESSAGE_ID(SD_MESSAGE_CORE_ISOLATE_TARGET_FAILED_STR));
         } else
                 log_info("Queued %s job for default target %s.",
                          job_type_to_string(job->type),
@@ -2985,7 +2992,7 @@ static int collect_fds(FDSet **ret_fds, const char **ret_error_message) {
                 *ret_error_message = "Failed to allocate fd set";
                 return log_struct_errno(LOG_EMERG, r,
                                         LOG_MESSAGE("Failed to allocate fd set: %m"),
-                                        "MESSAGE_ID=" SD_MESSAGE_CORE_FD_SET_FAILED_STR);
+                                        LOG_MESSAGE_ID(SD_MESSAGE_CORE_FD_SET_FAILED_STR));
         }
 
         /* The serialization fd should have O_CLOEXEC turned on already, let's verify that we didn't pick it up here */
@@ -3178,7 +3185,7 @@ int main(int argc, char *argv[]) {
                 if (r < 0) {
                         log_struct_errno(LOG_EMERG, r,
                                          LOG_MESSAGE("Failed to fix up PID 1 environment: %m"),
-                                         "MESSAGE_ID=" SD_MESSAGE_CORE_PID1_ENVIRONMENT_STR);
+                                         LOG_MESSAGE_ID(SD_MESSAGE_CORE_PID1_ENVIRONMENT_STR));
                         error_message = "Failed to fix up PID1 environment";
                         goto finish;
                 }
@@ -3200,14 +3207,6 @@ int main(int argc, char *argv[]) {
                 if (r < 0) {
                         error_message = "Failed to mount API filesystems";
                         goto finish;
-                }
-
-                if (!skip_setup) {
-                        r = mount_cgroup_legacy_controllers(loaded_policy);
-                        if (r < 0) {
-                                error_message = "Failed to mount cgroup v1 hierarchy";
-                                goto finish;
-                        }
                 }
 
                 /* The efivarfs is now mounted, let's lock down the system token. */
@@ -3311,6 +3310,23 @@ int main(int argc, char *argv[]) {
 
         log_execution_mode(&first_boot);
 
+        r = cg_has_legacy();
+        if (r < 0) {
+                error_message = "Failed to check cgroup hierarchy";
+                goto finish;
+        }
+        if (r > 0) {
+                r = log_full_errno(LOG_EMERG, SYNTHETIC_ERRNO(EPROTO),
+                                   "Detected cgroup v1 hierarchy at /sys/fs/cgroup/, which is no longer supported by current version of systemd.\n"
+                                   "Please instruct your initrd to mount cgroup v2 (unified) hierarchy,\n"
+                                   "possibly by removing any stale kernel command line options, such as:\n"
+                                   "  systemd.legacy_systemd_cgroup_controller=1\n"
+                                   "  systemd.unified_cgroup_hierarchy=0");
+
+                error_message = "Detected unsupported legacy cgroup hierarchy, refusing execution";
+                goto finish;
+        }
+
         r = initialize_runtime(skip_setup,
                                first_boot,
                                &saved_rlimit_nofile,
@@ -3326,7 +3342,7 @@ int main(int argc, char *argv[]) {
         if (r < 0) {
                 log_struct_errno(LOG_EMERG, r,
                                  LOG_MESSAGE("Failed to allocate manager object: %m"),
-                                 "MESSAGE_ID=" SD_MESSAGE_CORE_MANAGER_ALLOCATE_STR);
+                                 LOG_MESSAGE_ID(SD_MESSAGE_CORE_MANAGER_ALLOCATE_STR));
                 error_message = "Failed to allocate manager object";
                 goto finish;
         }

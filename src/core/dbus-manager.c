@@ -2073,7 +2073,7 @@ static int method_enqueue_marked_jobs(sd_bus_message *message, void *userdata, s
         if (r == 0)
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
-        log_info("Queuing reload/restart jobs for marked units%s", special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+        log_info("Queuing reload/restart jobs for marked units%s", glyph(GLYPH_ELLIPSIS));
 
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         r = sd_bus_message_new_method_return(message, &reply);
@@ -3044,7 +3044,7 @@ const sd_bus_vtable bus_manager_vtable[] = {
         SD_BUS_WRITABLE_PROPERTY("ServiceWatchdogs", "b", bus_property_get_bool, bus_property_set_bool, offsetof(Manager, service_watchdogs), 0),
         SD_BUS_PROPERTY("ControlGroup", "s", NULL, offsetof(Manager, cgroup_root), 0),
         SD_BUS_PROPERTY("SystemState", "s", property_get_system_state, 0, 0),
-        SD_BUS_PROPERTY("ExitCode", "y", bus_property_get_unsigned, offsetof(Manager, return_value), 0),
+        SD_BUS_PROPERTY("ExitCode", "y", NULL, offsetof(Manager, return_value), 0),
         SD_BUS_PROPERTY("DefaultTimerAccuracyUSec", "t", bus_property_get_usec, offsetof(Manager, defaults.timer_accuracy_usec), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("DefaultTimeoutStartUSec", "t", bus_property_get_usec, offsetof(Manager, defaults.timeout_start_usec), SD_BUS_VTABLE_PROPERTY_CONST),
         SD_BUS_PROPERTY("DefaultTimeoutStopUSec", "t", bus_property_get_usec, offsetof(Manager, defaults.timeout_stop_usec), SD_BUS_VTABLE_PROPERTY_CONST),

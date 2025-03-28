@@ -3248,7 +3248,7 @@ int verity_settings_load(
                          * that doesn't exist for /usr */
 
                         if (designator < 0 || designator == PARTITION_ROOT) {
-                                r = getxattr_malloc(image, "user.verity.roothash", &text);
+                                r = getxattr_malloc(image, "user.verity.roothash", &text, /* ret_size= */ NULL);
                                 if (r < 0) {
                                         _cleanup_free_ char *p = NULL;
 
@@ -3277,7 +3277,7 @@ int verity_settings_load(
                                  * `usrhash`, because `usrroothash` or `rootusrhash` would just be too
                                  * confusing. We thus drop the reference to the root of the Merkle tree, and
                                  * just indicate which file system it's about. */
-                                r = getxattr_malloc(image, "user.verity.usrhash", &text);
+                                r = getxattr_malloc(image, "user.verity.usrhash", &text, /* ret_size= */ NULL);
                                 if (r < 0) {
                                         _cleanup_free_ char *p = NULL;
 
@@ -3692,7 +3692,7 @@ int dissected_image_acquire_metadata(
                 switch (k) {
 
                 case META_HOSTNAME:
-                        r = read_etc_hostname_stream(f, &hostname);
+                        r = read_etc_hostname_stream(f, /* substitute_wildcards= */ false, &hostname);
                         if (r < 0)
                                 log_debug_errno(r, "Failed to read /etc/hostname of image: %m");
 

@@ -67,7 +67,8 @@ Match.Property,                              config_parse_match_property,       
 Match.Host,                                  config_parse_net_condition,                               CONDITION_HOST,                offsetof(Network, conditions)
 Match.Virtualization,                        config_parse_net_condition,                               CONDITION_VIRTUALIZATION,      offsetof(Network, conditions)
 Match.KernelCommandLine,                     config_parse_net_condition,                               CONDITION_KERNEL_COMMAND_LINE, offsetof(Network, conditions)
-Match.KernelVersion,                         config_parse_net_condition,                               CONDITION_KERNEL_VERSION,      offsetof(Network, conditions)
+Match.KernelVersion,                         config_parse_net_condition,                               CONDITION_VERSION,             offsetof(Network, conditions)
+Match.Version,                               config_parse_net_condition,                               CONDITION_VERSION,             offsetof(Network, conditions)
 Match.Credential,                            config_parse_net_condition,                               CONDITION_CREDENTIAL,          offsetof(Network, conditions)
 Match.Architecture,                          config_parse_net_condition,                               CONDITION_ARCHITECTURE,        offsetof(Network, conditions)
 Match.Firmware,                              config_parse_net_condition,                               CONDITION_FIRMWARE,            offsetof(Network, conditions)
@@ -385,6 +386,7 @@ Bridge.Priority,                             config_parse_bridge_port_priority, 
 Bridge.MulticastRouter,                      config_parse_multicast_router,                            0,                             offsetof(Network, multicast_router)
 Bridge.Locked,                               config_parse_tristate,                                    0,                             offsetof(Network, bridge_locked)
 Bridge.MACAuthenticationBypass,              config_parse_tristate,                                    0,                             offsetof(Network, bridge_mac_authentication_bypass)
+Bridge.VLANTunnel,                           config_parse_tristate,                                    0,                             offsetof(Network, bridge_vlan_tunnel)
 BridgeFDB.MACAddress,                        config_parse_fdb_hwaddr,                                  0,                             0
 BridgeFDB.VLANId,                            config_parse_fdb_vlan_id,                                 0,                             0
 BridgeFDB.Destination,                       config_parse_fdb_destination,                             0,                             0

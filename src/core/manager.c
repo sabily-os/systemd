@@ -336,7 +336,7 @@ static int manager_check_ask_password(Manager *m) {
                 if (inotify_fd < 0)
                         return log_error_errno(errno, "Failed to create inotify object: %m");
 
-                (void) mkdir_p_label("/run/systemd/ask-password", 0755);
+                (void) mkdir_label("/run/systemd/ask-password", 0755);
                 r = inotify_add_watch_and_warn(inotify_fd, "/run/systemd/ask-password", IN_CLOSE_WRITE|IN_DELETE|IN_MOVED_TO|IN_ONLYDIR);
                 if (r < 0)
                         return r;
@@ -947,16 +947,10 @@ int manager_new(RuntimeScope runtime_scope, ManagerTestRunFlags test_run_flags, 
         /* Prepare log fields we can use for structured logging */
         if (MANAGER_IS_SYSTEM(m)) {
                 m->unit_log_field = "UNIT=";
-                m->unit_log_format_string = "UNIT=%s";
-
                 m->invocation_log_field = "INVOCATION_ID=";
-                m->invocation_log_format_string = "INVOCATION_ID=%s";
         } else {
                 m->unit_log_field = "USER_UNIT=";
-                m->unit_log_format_string = "USER_UNIT=%s";
-
                 m->invocation_log_field = "USER_INVOCATION_ID=";
-                m->invocation_log_format_string = "USER_INVOCATION_ID=%s";
         }
 
         /* Reboot immediately if the user hits C-A-D more often than 7x per 2s */
@@ -1047,7 +1041,7 @@ int manager_new(RuntimeScope runtime_scope, ManagerTestRunFlags test_run_flags, 
                         if (r < 0)
                                 return r;
 
-                        r = mkdir_p_label(units_path, 0755);
+                        r = mkdir_label(units_path, 0755);
                 }
                 if (r < 0 && r != -EEXIST)
                         return r;
@@ -1105,7 +1099,6 @@ static int manager_setup_notify(Manager *m) {
                                                m->notify_socket);
                 sa_len = r;
 
-                (void) mkdir_parents_label(m->notify_socket, 0755);
                 (void) sockaddr_un_unlink(&sa.un);
 
                 r = mac_selinux_bind(fd, &sa.sa, sa_len);
@@ -1883,7 +1876,7 @@ static void manager_coldplug(Manager *m) {
 
         assert(m);
 
-        log_debug("Invoking unit coldplug() handlers%s", special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+        log_debug("Invoking unit coldplug() handlers%s", glyph(GLYPH_ELLIPSIS));
 
         /* Let's place the units back into their deserialized state */
         HASHMAP_FOREACH_KEY(u, k, m->units) {
@@ -1904,7 +1897,7 @@ static void manager_catchup(Manager *m) {
 
         assert(m);
 
-        log_debug("Invoking unit catchup() handlers%s", special_glyph(SPECIAL_GLYPH_ELLIPSIS));
+        log_debug("Invoking unit catchup() handlers%s", glyph(GLYPH_ELLIPSIS));
 
         /* Let's catch up on any state changes that happened while we were reloading/reexecing */
         HASHMAP_FOREACH_KEY(u, k, m->units) {
@@ -1968,6 +1961,9 @@ static bool manager_dbus_is_running(Manager *m, bool deserialized) {
 
 static void manager_setup_bus(Manager *m) {
         assert(m);
+
+        if (MANAGER_IS_TEST_RUN(m))
+                return;
 
         /* Let's set up our private bus connection now, unconditionally */
         (void) bus_init_private(m);
@@ -2045,10 +2041,30 @@ void manager_reloading_stopp(Manager **m) {
         }
 }
 
+static int manager_make_runtime_dir(Manager *m) {
+        int r;
+
+        assert(m);
+
+        _cleanup_free_ char *d = path_join(m->prefix[EXEC_DIRECTORY_RUNTIME], "systemd");
+        if (!d)
+                return log_oom();
+
+        r = mkdir_label(d, 0755);
+        if (r < 0 && r != -EEXIST)
+                return log_error_errno(r, "Failed to create directory '%s/': %m", d);
+
+        return 0;
+}
+
 int manager_startup(Manager *m, FILE *serialization, FDSet *fds, const char *root) {
         int r;
 
         assert(m);
+
+        r = manager_make_runtime_dir(m);
+        if (r < 0)
+                return r;
 
         /* If we are running in test mode, we still want to run the generators,
          * but we should not touch the real generator directories. */
@@ -2865,7 +2881,7 @@ static void manager_invoke_sigchld_event(
         u->sigchldgen = m->sigchldgen;
 
         log_unit_debug(u, "Child "PID_FMT" belongs to %s.", si->si_pid, u->id);
-        unit_unwatch_pid(u, si->si_pid);
+        unit_unwatch_pidref(u, &PIDREF_MAKE_FROM_PID(si->si_pid));
 
         if (UNIT_VTABLE(u)->sigchld_event)
                 UNIT_VTABLE(u)->sigchld_event(u, si->si_pid, si->si_code, si->si_status);
@@ -2976,8 +2992,13 @@ static void manager_handle_ctrl_alt_del(Manager *m) {
         if (ratelimit_below(&m->ctrl_alt_del_ratelimit) || m->cad_burst_action == EMERGENCY_ACTION_NONE)
                 manager_start_special(m, SPECIAL_CTRL_ALT_DEL_TARGET, JOB_REPLACE_IRREVERSIBLY);
         else
-                emergency_action(m, m->cad_burst_action, EMERGENCY_ACTION_WARN, NULL, -1,
-                                 "Ctrl-Alt-Del was pressed more than 7 times within 2s");
+                emergency_action(
+                                m,
+                                m->cad_burst_action,
+                                EMERGENCY_ACTION_WARN,
+                                /* reboot_arg= */ NULL,
+                                /* exit_status= */ -1,
+                                "Ctrl-Alt-Del was pressed more than 7 times within 2s");
 }
 
 static int manager_dispatch_signal_fd(sd_event_source *source, int fd, uint32_t revents, void *userdata) {
@@ -3232,7 +3253,7 @@ static int manager_dispatch_time_change_fd(sd_event_source *source, int fd, uint
         Unit *u;
 
         log_struct(LOG_DEBUG,
-                   "MESSAGE_ID=" SD_MESSAGE_TIME_CHANGE_STR,
+                   LOG_MESSAGE_ID(SD_MESSAGE_TIME_CHANGE_STR),
                    LOG_MESSAGE("Time has been changed"));
 
         /* Restart the watch */
@@ -3325,13 +3346,13 @@ int manager_loop(Manager *m) {
 
         while (m->objective == MANAGER_OK) {
 
-                (void) watchdog_ping();
-
                 if (!ratelimit_below(&rl)) {
                         /* Yay, something is going seriously wrong, pause a little */
                         log_warning("Looping too fast. Throttling execution a little.");
                         sleep(1);
                 }
+
+                (void) watchdog_ping();
 
                 if (manager_dispatch_load_queue(m) > 0)
                         continue;
@@ -3364,7 +3385,7 @@ int manager_loop(Manager *m) {
                         continue;
 
                 /* Sleep for watchdog runtime wait time */
-                r = sd_event_run(m->event, watchdog_runtime_wait());
+                r = sd_event_run(m->event, watchdog_runtime_wait(/* divisor= */ 2));
                 if (r < 0)
                         return log_error_errno(r, "Failed to run event loop: %m");
         }
@@ -3555,9 +3576,6 @@ void manager_set_watchdog(Manager *m, WatchdogType t, usec_t timeout) {
         if (MANAGER_IS_USER(m))
                 return;
 
-        if (m->watchdog[t] == timeout)
-                return;
-
         if (m->watchdog_overridden[t] == USEC_INFINITY) {
                 if (t == WATCHDOG_RUNTIME)
                         (void) watchdog_setup(timeout);
@@ -3574,9 +3592,6 @@ void manager_override_watchdog(Manager *m, WatchdogType t, usec_t timeout) {
         assert(m);
 
         if (MANAGER_IS_USER(m))
-                return;
-
-        if (m->watchdog_overridden[t] == timeout)
                 return;
 
         usec = timeout == USEC_INFINITY ? m->watchdog[t] : timeout;
@@ -3761,8 +3776,8 @@ static void log_taint_string(Manager *m) {
 
         log_struct(LOG_NOTICE,
                    LOG_MESSAGE("System is tainted: %s", taint),
-                   "TAINT=%s", taint,
-                   "MESSAGE_ID=" SD_MESSAGE_TAINTED_STR);
+                   LOG_ITEM("TAINT=%s", taint),
+                   LOG_MESSAGE_ID(SD_MESSAGE_TAINTED_STR));
 }
 
 static void manager_notify_finished(Manager *m) {
@@ -3778,8 +3793,8 @@ static void manager_notify_finished(Manager *m) {
                                                                 m->timestamps[MANAGER_TIMESTAMP_SHUTDOWN_START].monotonic);
 
                 log_struct(LOG_INFO,
-                           "MESSAGE_ID=" SD_MESSAGE_STARTUP_FINISHED_STR,
-                           "USERSPACE_USEC="USEC_FMT, userspace_usec,
+                           LOG_MESSAGE_ID(SD_MESSAGE_STARTUP_FINISHED_STR),
+                           LOG_ITEM("USERSPACE_USEC="USEC_FMT, userspace_usec),
                            LOG_MESSAGE("Soft-reboot finished in %s, counter is now at %u.",
                                        FORMAT_TIMESPAN(total_usec, USEC_PER_MSEC),
                                        m->soft_reboots_count));
@@ -3810,10 +3825,10 @@ static void manager_notify_finished(Manager *m) {
                         initrd_usec = m->timestamps[MANAGER_TIMESTAMP_USERSPACE].monotonic - m->timestamps[MANAGER_TIMESTAMP_INITRD].monotonic;
 
                         log_struct(LOG_INFO,
-                                   "MESSAGE_ID=" SD_MESSAGE_STARTUP_FINISHED_STR,
-                                   "KERNEL_USEC="USEC_FMT, kernel_usec,
-                                   "INITRD_USEC="USEC_FMT, initrd_usec,
-                                   "USERSPACE_USEC="USEC_FMT, userspace_usec,
+                                   LOG_MESSAGE_ID(SD_MESSAGE_STARTUP_FINISHED_STR),
+                                   LOG_ITEM("KERNEL_USEC="USEC_FMT, kernel_usec),
+                                   LOG_ITEM("INITRD_USEC="USEC_FMT, initrd_usec),
+                                   LOG_ITEM("USERSPACE_USEC="USEC_FMT, userspace_usec),
                                    LOG_MESSAGE("Startup finished in %s%s (kernel) + %s (initrd) + %s (userspace) = %s.",
                                                buf,
                                                FORMAT_TIMESPAN(kernel_usec, USEC_PER_MSEC),
@@ -3827,9 +3842,9 @@ static void manager_notify_finished(Manager *m) {
                         initrd_usec = 0;
 
                         log_struct(LOG_INFO,
-                                   "MESSAGE_ID=" SD_MESSAGE_STARTUP_FINISHED_STR,
-                                   "KERNEL_USEC="USEC_FMT, kernel_usec,
-                                   "USERSPACE_USEC="USEC_FMT, userspace_usec,
+                                   LOG_MESSAGE_ID(SD_MESSAGE_STARTUP_FINISHED_STR),
+                                   LOG_ITEM("KERNEL_USEC="USEC_FMT, kernel_usec),
+                                   LOG_ITEM("USERSPACE_USEC="USEC_FMT, userspace_usec),
                                    LOG_MESSAGE("Startup finished in %s%s (kernel) + %s (userspace) = %s.",
                                                buf,
                                                FORMAT_TIMESPAN(kernel_usec, USEC_PER_MSEC),
@@ -3842,13 +3857,16 @@ static void manager_notify_finished(Manager *m) {
                 total_usec = userspace_usec = m->timestamps[MANAGER_TIMESTAMP_FINISH].monotonic - m->timestamps[MANAGER_TIMESTAMP_USERSPACE].monotonic;
 
                 log_struct(LOG_INFO,
-                           "MESSAGE_ID=" SD_MESSAGE_USER_STARTUP_FINISHED_STR,
-                           "USERSPACE_USEC="USEC_FMT, userspace_usec,
+                           LOG_MESSAGE_ID(SD_MESSAGE_USER_STARTUP_FINISHED_STR),
+                           LOG_ITEM("USERSPACE_USEC="USEC_FMT, userspace_usec),
                            LOG_MESSAGE("Startup finished in %s.",
                                        FORMAT_TIMESPAN(total_usec, USEC_PER_MSEC)));
         }
 
         bus_manager_send_finished(m, firmware_usec, loader_usec, kernel_usec, initrd_usec, userspace_usec, total_usec);
+
+        if (MANAGER_IS_SYSTEM(m) && detect_container() <= 0)
+                watchdog_report_if_missing();
 
         log_taint_string(m);
 }

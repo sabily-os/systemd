@@ -714,7 +714,7 @@ int mount_verbose_full(
                           what, where, strnull(fl), strempty(o));
         else if (f & MS_MOVE)
                 log_debug("Moving mount %s %s %s (%s \"%s\")...",
-                          what, special_glyph(SPECIAL_GLYPH_ARROW_RIGHT), where, strnull(fl), strempty(o));
+                          what, glyph(GLYPH_ARROW_RIGHT), where, strnull(fl), strempty(o));
         else
                 log_debug("Mounting %s (%s) on %s (%s \"%s\")...",
                           strna(what), strna(type), where, strnull(fl), strempty(o));
@@ -1442,7 +1442,7 @@ int make_userns(uid_t uid_shift,
         }
 
         /* We always assign the same UID and GID ranges */
-        userns_fd = userns_acquire(line, line);
+        userns_fd = userns_acquire(line, line, /* setgroups_deny= */ true);
         if (userns_fd < 0)
                 return log_debug_errno(userns_fd, "Failed to acquire new userns: %m");
 

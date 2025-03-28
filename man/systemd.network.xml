@@ -152,6 +152,7 @@
       <xi:include href="systemd.link.xml" xpointer="virtualization" />
       <xi:include href="systemd.link.xml" xpointer="kernel-command-line" />
       <xi:include href="systemd.link.xml" xpointer="kernel-version" />
+      <xi:include href="systemd.link.xml" xpointer="version" />
       <xi:include href="systemd.link.xml" xpointer="credential" />
       <xi:include href="systemd.link.xml" xpointer="architecture" />
       <xi:include href="systemd.link.xml" xpointer="firmware" />
@@ -4642,6 +4643,15 @@ ServerAddress=192.168.0.1/24</programlisting>
           creates newly learned fdb entries in a "locked" state. User space can authenticate these entries by
           clearing the locked flag. Requires Learning to be enabled. When unset, the kernel's default will be
           used.</para>
+
+          <xi:include href="version-info.xml" xpointer="v258"/>
+        </listitem>
+      </varlistentry>
+      <varlistentry>
+        <term><varname>VLANTunnel=</varname></term>
+        <listitem>
+          <para>Takes a boolean. Configures whether vlan tunnel mode is to be enabled on this port.
+          When unset, the kernel's default will be used.</para>
 
           <xi:include href="version-info.xml" xpointer="v258"/>
         </listitem>

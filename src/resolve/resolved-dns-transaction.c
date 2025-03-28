@@ -401,14 +401,14 @@ void dns_transaction_complete(DnsTransaction *t, DnsTransactionState state) {
                 dns_resource_key_to_string(dns_transaction_key(t), key_str, sizeof key_str);
 
                 log_struct(LOG_NOTICE,
-                           "MESSAGE_ID=" SD_MESSAGE_DNSSEC_FAILURE_STR,
+                           LOG_MESSAGE_ID(SD_MESSAGE_DNSSEC_FAILURE_STR),
                            LOG_MESSAGE("DNSSEC validation failed for question %s: %s",
                                        key_str, dnssec_result_to_string(t->answer_dnssec_result)),
-                           "DNS_TRANSACTION=%" PRIu16, t->id,
-                           "DNS_QUESTION=%s", key_str,
-                           "DNSSEC_RESULT=%s", dnssec_result_to_string(t->answer_dnssec_result),
-                           "DNS_SERVER=%s", strna(dns_server_string_full(t->server)),
-                           "DNS_SERVER_FEATURE_LEVEL=%s", dns_server_feature_level_to_string(t->server->possible_feature_level));
+                           LOG_ITEM("DNS_TRANSACTION=%" PRIu16, t->id),
+                           LOG_ITEM("DNS_QUESTION=%s", key_str),
+                           LOG_ITEM("DNSSEC_RESULT=%s", dnssec_result_to_string(t->answer_dnssec_result)),
+                           LOG_ITEM("DNS_SERVER=%s", strna(dns_server_string_full(t->server))),
+                           LOG_ITEM("DNS_SERVER_FEATURE_LEVEL=%s", dns_server_feature_level_to_string(t->server->possible_feature_level)));
         }
 
         /* Note that this call might invalidate the query. Callers
@@ -2772,7 +2772,7 @@ int dns_transaction_request_dnssec_keys(DnsTransaction *t) {
                         _cleanup_(dns_resource_key_unrefp) DnsResourceKey *ds = NULL;
 
                         log_debug("Requesting DS (%s %s) to validate transaction %" PRIu16 " (%s empty response).",
-                                  special_glyph(SPECIAL_GLYPH_ARROW_RIGHT), name, t->id,
+                                  glyph(GLYPH_ARROW_RIGHT), name, t->id,
                                   dns_resource_key_name(dns_transaction_key(t)));
 
                         ds = dns_resource_key_new(dns_transaction_key(t)->class, DNS_TYPE_DS, name);

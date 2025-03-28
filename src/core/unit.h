@@ -876,9 +876,7 @@ void unit_notify_cgroup_oom(Unit *u, bool managed_oom);
 void unit_notify(Unit *u, UnitActiveState os, UnitActiveState ns, bool reload_success);
 
 int unit_watch_pidref(Unit *u, const PidRef *pid, bool exclusive);
-int unit_watch_pid(Unit *u, pid_t pid, bool exclusive);
 void unit_unwatch_pidref(Unit *u, const PidRef *pid);
-void unit_unwatch_pid(Unit *u, pid_t pid);
 void unit_unwatch_all_pids(Unit *u);
 void unit_unwatch_pidref_done(Unit *u, PidRef *pidref);
 
@@ -1146,8 +1144,8 @@ UnitDependency unit_mount_dependency_type_to_dependency_type(UnitMountDependency
 
 /* Like LOG_MESSAGE(), but with the unit name prefixed. */
 #define LOG_UNIT_MESSAGE(unit, fmt, ...) LOG_MESSAGE("%s: " fmt, (unit)->id, ##__VA_ARGS__)
-#define LOG_UNIT_ID(unit) (unit)->manager->unit_log_format_string, (unit)->id
-#define LOG_UNIT_INVOCATION_ID(unit) (unit)->manager->invocation_log_format_string, (unit)->invocation_id_string
+#define LOG_UNIT_ID(unit) LOG_ITEM("%s%s", (unit)->manager->unit_log_field, (unit)->id)
+#define LOG_UNIT_INVOCATION_ID(unit) LOG_ITEM("%s%s", (unit)->manager->invocation_log_field, (unit)->invocation_id_string)
 
 const char* collect_mode_to_string(CollectMode m) _const_;
 CollectMode collect_mode_from_string(const char *s) _pure_;
