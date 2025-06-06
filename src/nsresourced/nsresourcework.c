@@ -155,7 +155,7 @@ static int vl_method_get_user_record(sd_varlink *link, sd_json_variant *paramete
                         return log_oom();
 
                 r = userns_registry_load_by_name(
-                                /* registry_fd= */ -EBADF,
+                                /* dir_fd= */ -EBADF,
                                 n,
                                 &userns_info);
                 if (r == -ENOENT)
@@ -183,7 +183,7 @@ static int vl_method_get_user_record(sd_varlink *link, sd_json_variant *paramete
                 offset = p.uid - start;
 
                 r = userns_registry_load_by_start_uid(
-                                /* registry_fd= */ -EBADF,
+                                /* dir_fd= */ -EBADF,
                                 start,
                                 &userns_info);
                 if (r == -ENOENT)
@@ -282,7 +282,7 @@ static int vl_method_get_group_record(sd_varlink *link, sd_json_variant *paramet
                         return log_oom();
 
                 r = userns_registry_load_by_name(
-                                /* registry_fd= */ -EBADF,
+                                /* dir_fd= */ -EBADF,
                                 n,
                                 &userns_info);
                 if (r == -ENOENT)
@@ -310,7 +310,7 @@ static int vl_method_get_group_record(sd_varlink *link, sd_json_variant *paramet
                 offset = p.gid - start;
 
                 r = userns_registry_load_by_start_gid(
-                                /* registry_fd= */ -EBADF,
+                                /* dir_fd= */ -EBADF,
                                 start,
                                 &userns_info);
                 if (r == -ENOENT)
@@ -379,13 +379,13 @@ static int uid_is_available(
         if (r > 0)
                 return false;
 
-        r = userdb_by_uid(candidate, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret_record= */ NULL);
+        r = userdb_by_uid(candidate, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret= */ NULL);
         if (r >= 0)
                 return false;
         if (r != -ESRCH)
                 return r;
 
-        r = groupdb_by_gid(candidate, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret_record= */ NULL);
+        r = groupdb_by_gid(candidate, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret= */ NULL);
         if (r >= 0)
                 return false;
         if (r != -ESRCH)
@@ -416,13 +416,13 @@ static int name_is_available(
         if (!user_name)
                 return -ENOMEM;
 
-        r = userdb_by_name(user_name, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret_record= */ NULL);
+        r = userdb_by_name(user_name, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret= */ NULL);
         if (r >= 0)
                 return false;
         if (r != -ESRCH)
                 return r;
 
-        r = groupdb_by_name(user_name, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret_record= */ NULL);
+        r = groupdb_by_name(user_name, /* match= */ NULL, USERDB_AVOID_MULTIPLEXER, /* ret= */ NULL);
         if (r >= 0)
                 return false;
         if (r != -ESRCH)
@@ -1248,7 +1248,7 @@ static int vl_method_add_mount_to_user_namespace(sd_varlink *link, sd_json_varia
                         link,
                         /* bus= */ NULL,
                         "io.systemd.namespace-resource.delegate-mount",
-                        /* polkit_details= */ NULL,
+                        /* details= */ NULL,
                         /* good_user= */ UID_INVALID,
                         POLKIT_DEFAULT_ALLOW, /* If no polkit is installed, allow delegation of mounts to registered userns */
                         &c->polkit_registry);
@@ -1401,7 +1401,7 @@ static int vl_method_add_cgroup_to_user_namespace(sd_varlink *link, sd_json_vari
                         link,
                         /* bus= */ NULL,
                         "io.systemd.namespace-resource.delegate-cgroup",
-                        /* polkit_details= */ NULL,
+                        /* details= */ NULL,
                         /* good_user= */ UID_INVALID,
                         POLKIT_DEFAULT_ALLOW, /* If no polkit is installed, allow delegation of cgroups to registered userns */
                         &c->polkit_registry);
@@ -1683,7 +1683,7 @@ static int validate_netns(sd_varlink *link, int userns_fd, int netns_fd) {
         if (owner_userns_fd < 0)
                 return -errno;
 
-        r = inode_same_at(owner_userns_fd, /* path_a= */ NULL, userns_fd, /* path_b= */ NULL, AT_EMPTY_PATH);
+        r = inode_same_at(owner_userns_fd, /* filea= */ NULL, userns_fd, /* fileb= */ NULL, AT_EMPTY_PATH);
         if (r < 0)
                 return r;
         if (r == 0)

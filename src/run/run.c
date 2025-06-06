@@ -36,7 +36,7 @@
 #include "format-table.h"
 #include "format-util.h"
 #include "fs-util.h"
-#include "hostname-setup.h"
+#include "hostname-util.h"
 #include "log.h"
 #include "main-func.h"
 #include "osc-context.h"
@@ -1728,12 +1728,7 @@ static int run_context_reconnect(RunContext *c) {
                                /* reply = */ NULL, NULL);
         if (r < 0) {
                 /* Hmm, the service manager probably hasn't finished reexecution just yet? Try again later. */
-                if (sd_bus_error_has_names(&error,
-                                           SD_BUS_ERROR_NO_REPLY,
-                                           SD_BUS_ERROR_DISCONNECTED,
-                                           SD_BUS_ERROR_TIMED_OUT,
-                                           SD_BUS_ERROR_SERVICE_UNKNOWN,
-                                           SD_BUS_ERROR_NAME_HAS_NO_OWNER))
+                if (bus_error_is_connection(&error) || bus_error_is_unknown_service(&error))
                         goto retry_timer;
 
                 if (sd_bus_error_has_name(&error, SD_BUS_ERROR_UNKNOWN_OBJECT))
@@ -1874,14 +1869,7 @@ static int run_context_update(RunContext *c) {
         if (r < 0) {
                 /* If this is a connection error, then try to reconnect. This might be because the service
                  * manager is being restarted. Handle this gracefully. */
-                if (sd_bus_error_has_names(
-                                    &error,
-                                    SD_BUS_ERROR_NO_REPLY,
-                                    SD_BUS_ERROR_DISCONNECTED,
-                                    SD_BUS_ERROR_TIMED_OUT,
-                                    SD_BUS_ERROR_SERVICE_UNKNOWN,
-                                    SD_BUS_ERROR_NAME_HAS_NO_OWNER)) {
-
+                if (bus_error_is_connection(&error) || bus_error_is_unknown_service(&error)) {
                         log_info_errno(r, "Bus call failed due to connection problems. Trying to reconnect...");
                         /* Not propagating error, because we handled it already, by reconnecting. */
                         return run_context_reconnect(c);
@@ -2075,40 +2063,24 @@ static int acquire_invocation_id(sd_bus *bus, const char *unit, sd_id128_t *ret)
                                 &error,
                                 &reply,
                                 "ay");
-        if (r < 0)
+        if (r < 0) {
+                /* Let's ignore connection errors. This might be caused by that the service manager is being
+                 * restarted. Handle this gracefully. */
+                if (bus_error_is_connection(&error) || bus_error_is_unknown_service(&error)) {
+                        log_debug_errno(r, "Invocation ID request failed due to bus connection problems, ignoring: %s",
+                                        bus_error_message(&error, r));
+                        *ret = SD_ID128_NULL;
+                        return 0;
+                }
+
                 return log_error_errno(r, "Failed to request invocation ID for unit: %s", bus_error_message(&error, r));
+        }
 
         r = bus_message_read_id128(reply, ret);
         if (r < 0)
                 return bus_log_parse_error(r);
 
         return r; /* Return true when we get a non-null invocation ID. */
-}
-
-static void set_window_title(PTYForward *f) {
-        _cleanup_free_ char *hn = NULL, *cl = NULL, *dot = NULL;
-
-        assert(f);
-
-        if (!shall_set_terminal_title())
-                return;
-
-        if (!arg_host)
-                (void) gethostname_strict(&hn);
-
-        cl = strv_join(arg_cmdline, " ");
-        if (!cl)
-                return (void) log_oom();
-
-        if (emoji_enabled())
-                dot = strjoin(glyph(privileged_execution() ? GLYPH_RED_CIRCLE : GLYPH_YELLOW_CIRCLE), " ");
-
-        if (arg_host || hn)
-                (void) pty_forward_set_titlef(f, "%s%s on %s", strempty(dot), cl, arg_host ?: hn);
-        else
-                (void) pty_forward_set_titlef(f, "%s%s", strempty(dot), cl);
-
-        (void) pty_forward_set_title_prefix(f, dot);
 }
 
 static int fchown_to_capsule(int fd, const char *capsule) {
@@ -2187,7 +2159,9 @@ static int run_context_setup_ptyfwd(RunContext *c) {
         if (!isempty(arg_background))
                 (void) pty_forward_set_background_color(c->forward, arg_background);
 
-        set_window_title(c->forward);
+        (void) pty_forward_set_window_title(c->forward,
+                                            privileged_execution() ? GLYPH_RED_CIRCLE : GLYPH_YELLOW_CIRCLE,
+                                            arg_host, arg_cmdline);
         return 0;
 }
 
@@ -2383,12 +2357,20 @@ static int start_transient_service(sd_bus *bus) {
 
                         (void) sd_bus_set_allow_interactive_authorization(system_bus, arg_ask_password);
 
-                        r = bus_call_method(system_bus,
-                                            bus_machine_mgr,
-                                            "OpenMachinePTY",
-                                            &error,
-                                            &pty_reply,
-                                            "s", arg_host);
+                        /* Chop off a username prefix. We allow this for sd-bus machine connections, hence
+                         * support that here too. */
+                        _cleanup_free_ char *h = NULL;
+                        r = split_user_at_host(arg_host, /* ret_user= */ NULL, &h);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to split host specification '%s': %m", arg_host);
+
+                        r = bus_call_method(
+                                        system_bus,
+                                        bus_machine_mgr,
+                                        "OpenMachinePTY",
+                                        &error,
+                                        &pty_reply,
+                                        "s", h ?: ".host");
                         if (r < 0)
                                 return log_error_errno(r, "Failed to get machine PTY: %s", bus_error_message(&error, r));
 

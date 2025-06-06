@@ -66,8 +66,6 @@ Janitorial Clean-ups:
 * rework mount.c and swap.c to follow proper state enumeration/deserialization
   semantics, like we do for device.c now
 
-* get rid of basename() and replace by path_extract_filename()
-
 * Replace our fstype_is_network() with a call to libmount's mnt_fstype_is_netfs()?
   Having two lists is not nice, but maybe it's now worth making a dependency on
   libmount for something so trivial.
@@ -122,10 +120,26 @@ Deprecations and removals:
 
 Features:
 
-* repart: tweak CopyBlocks=auto so that if we operate on the booted system
-  (i.e. without --image= or --root= specified), we use the by-designator
-  symlinks, so that we definitely base or copy logic on the currently loaded
-  version of the OS, instead of just the "first".
+* Add PassPidFileDescriptor= similar in style to PassCredentials= to .socket
+  units
+
+* automatically reset specific EFI vars on factory reset (make this generic
+  enough so that infrac can be used to erase shim's mok vars?)
+
+* similar: add a plugin for factory reset logic that erases certain parts of
+  the ESP, but leaves others in place.
+
+* systemd-repart: add --defer-partitions-factory-reset or so, as a flavour of
+  --defer-partitions= that picks all partitions that are marked for factory
+  reset. for an installer this is usually the partitions not to copy, too.
+
+* flush_fd() should probably try to be smart and stop reading once we know that
+  all further queued data was enqueued after flush_fd() was originally
+  called. For that, try SIOCINQ if fd refers to stream socket, and look at
+  timestamps for datagram sockets.
+
+* Similar flush_accept() should look at sockdiag queued sockets count and exit
+  once we flushed out the specified number of connections.
 
 * maybe introduce a new per-unit drop-in directory .confext.d/ that may contain
   symlinks to confext images to enable for the unit.

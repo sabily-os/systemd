@@ -3395,7 +3395,7 @@ int unit_set_slice(Unit *u, Unit *slice) {
         /* Disallow slice changes if @u is already bound to cgroups */
         if (UNIT_GET_SLICE(u)) {
                 CGroupRuntime *crt = unit_get_cgroup_runtime(u);
-                if (crt && crt->cgroup_realized)
+                if (crt && crt->cgroup_path)
                         return -EBUSY;
         }
 
@@ -4252,7 +4252,7 @@ static int unit_verify_contexts(const Unit *u) {
             exec_needs_mount_namespace(ec, /* params = */ NULL, /* runtime = */ NULL))
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "WorkingDirectory= may not be below /proc/, /sys/ or /dev/ when using mount namespacing. Refusing.");
 
-        if (exec_needs_pid_namespace(ec) && !UNIT_VTABLE(u)->notify_pidref)
+        if (exec_needs_pid_namespace(ec, /* params= */ NULL) && !UNIT_VTABLE(u)->notify_pidref)
                 return log_unit_error_errno(u, SYNTHETIC_ERRNO(ENOEXEC), "PrivatePIDs= setting is only supported for service units. Refusing.");
 
         const KillContext *kc = unit_get_kill_context(u);
@@ -6006,16 +6006,17 @@ static int unit_log_leftover_process_stop(const PidRef *pid, int sig, void *user
 }
 
 int unit_warn_leftover_processes(Unit *u, bool start) {
+        _cleanup_free_ char *cgroup = NULL;
+        int r;
+
         assert(u);
 
-        (void) unit_pick_cgroup_path(u);
-
-        CGroupRuntime *crt = unit_get_cgroup_runtime(u);
-        if (!crt || !crt->cgroup_path)
-                return 0;
+        r = unit_get_cgroup_path_with_fallback(u, &cgroup);
+        if (r < 0)
+                return r;
 
         return cg_kill_recursive(
-                        crt->cgroup_path,
+                        cgroup,
                         /* sig= */ 0,
                         /* flags= */ 0,
                         /* killed_pids= */ NULL,
