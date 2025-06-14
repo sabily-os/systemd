@@ -486,13 +486,6 @@ if get_option('b_sanitize') == 'none'
         possible_link_flags += '-Wl,--warn-common'
 endif
 
-if cc.get_id() == 'clang'
-        possible_common_cc_flags += [
-                '-Wno-typedef-redefinition',
-                '-Wno-gnu-variable-sized-type-not-at-end',
-        ]
-endif
-
 if get_option('mode') == 'release'
         # We could enable 'pattern' for developer mode, but that can interfere with
         # valgrind and sanitizer builds. Also, clang does not zero-initialize unions,
@@ -581,7 +574,7 @@ assert(long_max > 100000)
 conf.set_quoted('LONG_MAX_STR', '@0@'.format(long_max))
 
 foreach ident : [
-        ['struct dirent64',   '''##include <dirent.h>'''],      # for musl, but only for compile time check, see dirent-util.h
+        ['struct dirent64',   '''#include <dirent.h>'''],       # for musl, but only for compile time check, see dirent-util.h
         ['struct sched_attr', '''#include <sched.h>'''],        # since glibc-2.41
 ]
         # We get -1 if the size cannot be determined
@@ -1125,7 +1118,9 @@ else
 endif
 
 libmount = dependency('mount',
-                      version : fuzzer_build ? '>= 0' : '>= 2.30')
+                      version : fuzzer_build ? '>= 0' : '>= 2.30',
+                      disabler : true,
+                      required : get_option('libmount'))
 
 libfdisk = dependency('fdisk',
                       version : '>= 2.32',
@@ -2096,14 +2091,11 @@ if static_libsystemd != 'false'
                 install_tag: 'libsystemd',
                 install_dir : libdir,
                 pic : static_libsystemd_pic,
-                dependencies : [libblkid,
-                                libcap,
+                dependencies : [libcap,
                                 libdl,
                                 libgcrypt_cflags,
                                 liblz4_cflags,
                                 libm,
-                                libmount,
-                                libopenssl,
                                 librt,
                                 libxz_cflags,
                                 libzstd_cflags,
@@ -2625,7 +2617,7 @@ foreach dict : modules
         if is_nss
                 # We cannot use shared_module because it does not support version suffix.
                 # Unfortunately shared_library insists on creating the symlink…
-                meson.add_install_script(sh, '-c', 'rm $DESTDIR@0@/lib@1@.so'.format(libdir, name),
+                meson.add_install_script(sh, '-c', 'rm -f $DESTDIR@0@/lib@1@.so'.format(libdir, name),
                                          install_tag : 'nss')
                 nss_targets += lib
         endif

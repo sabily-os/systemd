@@ -7,13 +7,21 @@
 #
 # To run an individual test, specify it as a command line argument in the form
 # of <class>.<test_function>. E.g. the NetworkdMTUTests class has a test
-# function called test_ipv6_mtu().  To run just that test use:
+# function called test_ipv6_mtu(). To run just that test use:
 #
-#    sudo ./systemd-networkd-tests.py NetworkdMTUTests.test_ipv6_mtu
+#    run0 ./systemd-networkd-tests.py NetworkdMTUTests.test_ipv6_mtu
 #
-# Similarly, other individual tests can be run, eg.:
+# Similarly, other individual tests can be run, e.g.:
 #
-#    sudo ./systemd-networkd-tests.py NetworkdNetworkTests.test_ipv6_neigh_retrans_time
+#    run0 ./systemd-networkd-tests.py NetworkdNetworkTests.test_ipv6_neigh_retrans_time
+#
+# To run the test with the executables (systemd-networkd, networkctl, systemd-udevd and so on)
+# in your build directory, --build-dir=/path/to/build/ option can be used:
+#
+#    run0 ./systemd-networkd-tests.py --build-dir=/path/to/build NetworkdNetworkTests.test_address_static
+#
+# Note, unlike the long getopt option handling, the path must be specified after '=', rather than space.
+# Otherwise the path is recognized as a test case, and the test run will fail.
 
 import argparse
 import datetime
@@ -3389,6 +3397,17 @@ class NetworkdNetworkTests(unittest.TestCase, Utilities):
     def tearDown(self):
         tear_down_common()
 
+    def test_ID_NET_MANAGED_BY(self):
+        copy_network_unit('11-dummy.netdev', '11-dummy-unmanaged.link', '11-dummy.network')
+        start_networkd()
+        self.wait_online('test1:off', setup_state='unmanaged')
+
+        check_output('ip link set dev test1 up')
+        self.wait_online('test1:degraded', setup_state='unmanaged')
+
+        check_output('ip link set dev test1 down')
+        self.wait_online('test1:off', setup_state='unmanaged')
+
     def verify_address_static(
             self,
             label1: str,
@@ -5854,6 +5873,10 @@ class NetworkdBondTests(unittest.TestCase, Utilities):
         print(output)
         self.assertRegex(output, 'MASTER,UP,LOWER_UP')
 
+        # test case for issue #32186
+        restart_networkd()
+        self.wait_online('dummy98:enslaved', 'test1:enslaved', 'bond99:routable')
+
         self.wait_operstate('dummy98', 'enslaved')
         self.wait_operstate('test1', 'enslaved')
         self.wait_operstate('bond99', 'routable')
@@ -5879,6 +5902,8 @@ class NetworkdBondTests(unittest.TestCase, Utilities):
         if not self.wait_operstate('bond99', 'no-carrier', setup_timeout=30, fail_assert=False):
             # Huh? Kernel does not recognize that all slave interfaces are down?
             # Let's confirm that networkd's operstate is consistent with ip's result.
+            output = check_output('ip -d link show bond99')
+            print(output)
             self.assertNotRegex(output, 'NO-CARRIER')
 
 class NetworkdBridgeTests(unittest.TestCase, Utilities):
@@ -7720,6 +7745,62 @@ class NetworkdDHCPClientTests(unittest.TestCase, Utilities):
         self.assertNotIn('DHCPOFFER(veth-peer)', output)
         self.assertNotIn('DHCPREQUEST(veth-peer)', output)
         self.assertIn('DHCPACK(veth-peer)', output)
+
+    def check_bootp_client(self, check_log):
+        self.wait_online('veth99:routable', 'veth-peer:routable')
+        output = check_output('ip -4 address show dev veth99')
+        print(output)
+        self.assertRegex(output, r'inet 192.168.5.[0-9]*/24')
+
+        state = get_dhcp4_client_state('veth99')
+        print(f"DHCPv4 client state = {state}")
+        self.assertEqual(state, 'bound')
+
+        if check_log:
+            output = read_dnsmasq_log_file()
+            print(output)
+            self.assertIn('BOOTP(veth-peer)', output)
+            self.assertNotIn('DHCPDISCOVER(veth-peer)', output)
+            self.assertNotIn('DHCPOFFER(veth-peer)', output)
+            self.assertNotIn('DHCPREQUEST(veth-peer)', output)
+            self.assertNotIn('DHCPACK(veth-peer)', output)
+
+    def test_bootp_client(self):
+        copy_network_unit('25-veth.netdev', '25-dhcp-server-veth-peer.network', '25-bootp-client.network')
+        start_networkd()
+        self.wait_online('veth-peer:carrier')
+        start_dnsmasq('--dhcp-host=12:34:56:78:9a:bc,192.168.5.42,trixie-mule')
+        self.check_bootp_client(check_log=True)
+
+        touch_network_unit('25-bootp-client.network')
+        networkctl_reload()
+        self.check_bootp_client(check_log=True)
+
+        with open(os.path.join(network_unit_dir, '25-bootp-client.network'), mode='a', encoding='utf-8') as f:
+            f.write('[DHCPv4]\nBOOTP=no\n')
+
+        networkctl_reload()
+        self.check_bootp_client(check_log=False)
+
+        output = read_dnsmasq_log_file()
+        print(output)
+        # Note, on reload, the DHCP client will be started from INIT-REBOOT state,
+        # hence DISCOVER and OFFER message will not be sent/received.
+        self.assertNotIn('DHCPDISCOVER(veth-peer)', output)
+        self.assertNotIn('DHCPOFFER(veth-peer)', output)
+        self.assertIn('DHCPREQUEST(veth-peer)', output)
+        self.assertIn('DHCPACK(veth-peer)', output)
+
+        with open(os.path.join(network_unit_dir, '25-bootp-client.network'), mode='a', encoding='utf-8') as f:
+            f.write('[DHCPv4]\nBOOTP=yes\n')
+
+        since = datetime.datetime.now()
+
+        networkctl_reload()
+        self.check_bootp_client(check_log=False)
+
+        # Check if the client send RELEASE message of the previous lease
+        self.check_networkd_log('veth99: DHCPv4 client: RELEASE', since=since)
 
     def test_dhcp_client_ipv6_only_mode_without_ipv6_connectivity(self):
         copy_network_unit('25-veth.netdev',

@@ -212,7 +212,7 @@ static int parse_config(void) {
 #if HAVE_DWFL_SET_SYSROOT
                 { "Coredump", "EnterNamespace",  config_parse_bool,                0,                      &arg_enter_namespace   },
 #else
-                { "Coredump", "EnterNamespace",  config_parse_warn_compat,         DISABLED_CONFIGURATION, 0                      },
+                { "Coredump", "EnterNamespace",  config_parse_warn_compat,         DISABLED_CONFIGURATION, NULL                   },
 #endif
                 {}
         };
@@ -833,10 +833,13 @@ static int attach_mount_tree(int mount_tree_fd) {
                 return log_warning_errno(r, "Failed to create directory: %m");
 
         r = mount_setattr(mount_tree_fd, "", AT_EMPTY_PATH,
-                                &(struct mount_attr) {
-                                        .attr_set = MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|MOUNT_ATTR_NOEXEC|MOUNT_ATTR_NOSYMFOLLOW,
-                                        .propagation = MS_SLAVE,
-                                }, sizeof(struct mount_attr));
+                          &(struct mount_attr) {
+                                  /* MOUNT_ATTR_NOSYMFOLLOW is left out on purpose to allow libdwfl to resolve symlinks.
+                                   * libdwfl will use openat2() with RESOLVE_IN_ROOT so there is no risk of symlink escape.
+                                   * https://sourceware.org/git/?p=elfutils.git;a=patch;h=06f0520f9a78b07c11c343181d552791dd630346 */
+                                  .attr_set = MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|MOUNT_ATTR_NOEXEC,
+                                  .propagation = MS_SLAVE,
+                          }, sizeof(struct mount_attr));
         if (r < 0)
                 return log_warning_errno(errno, "Failed to change properties of mount tree: %m");
 
