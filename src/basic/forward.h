@@ -6,6 +6,7 @@
 #include <errno.h>              /* IWYU pragma: export */
 #include <inttypes.h>           /* IWYU pragma: export */
 #include <limits.h>             /* IWYU pragma: export */
+#include <paths.h>              /* IWYU pragma: export */
 #include <stdarg.h>             /* IWYU pragma: export */
 #include <stdbool.h>            /* IWYU pragma: export */
 #include <stddef.h>             /* IWYU pragma: export */
@@ -57,7 +58,6 @@ struct ucred;
  * used for C++ symbol name mangling, they're effectively part of the ABI and won't actually change. */
 typedef struct _IO_FILE FILE;
 typedef struct __dirstream DIR;
-typedef __socklen_t socklen_t;
 
 /* 3rd-party library forward declarations */
 
@@ -308,7 +308,7 @@ typedef struct VeritySettings VeritySettings;
 #define AT_FDCWD                -100
 #define AT_EMPTY_PATH           0x1000
 #define AT_SYMLINK_FOLLOW       0x400
-#define AT_SYMLINK_NOFOLLOW	0x100
+#define AT_SYMLINK_NOFOLLOW     0x100
 
 #define MODE_INVALID            ((mode_t) -1)
 

@@ -300,6 +300,23 @@ static int method_create_or_register_machine(
         if (hashmap_get(manager->machines, name))
                 return sd_bus_error_setf(error, BUS_ERROR_MACHINE_EXISTS, "Machine '%s' already exists", name);
 
+        const char *details[] = {
+                "name",  name,
+                "class", machine_class_to_string(c),
+                NULL
+        };
+
+        r = bus_verify_polkit_async(
+                        message,
+                        "org.freedesktop.machine1.create-machine",
+                        details,
+                        &manager->polkit_registry,
+                        error);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return 0; /* Will call us back */
+
         r = manager_add_machine(manager, name, &m);
         if (r < 0)
                 return r;
@@ -353,6 +370,8 @@ static int method_create_machine_internal(sd_bus_message *message, bool read_net
         r = method_create_or_register_machine(manager, message, read_network, &m, error);
         if (r < 0)
                 return r;
+        if (r == 0)
+                return 1; /* Will call us back */
 
         r = sd_bus_message_enter_container(message, 'a', "(sv)");
         if (r < 0)
@@ -389,6 +408,8 @@ static int method_register_machine_internal(sd_bus_message *message, bool read_n
         r = method_create_or_register_machine(manager, message, read_network, &m, error);
         if (r < 0)
                 return r;
+        if (r == 0)
+                return 1; /* Will call us back */
 
         r = cg_pidref_get_unit(&m->leader, &m->unit);
         if (r < 0) {
@@ -469,18 +490,13 @@ static int method_get_machine_os_release(sd_bus_message *message, void *userdata
 
 static int method_list_images(sd_bus_message *message, void *userdata, sd_bus_error *error) {
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        _cleanup_hashmap_free_ Hashmap *images = NULL;
-        _unused_ Manager *m = ASSERT_PTR(userdata);
-        Image *image;
+        Manager *m = ASSERT_PTR(userdata);
         int r;
 
         assert(message);
 
-        images = hashmap_new(&image_hash_ops);
-        if (!images)
-                return -ENOMEM;
-
-        r = image_discover(m->runtime_scope, IMAGE_MACHINE, NULL, images);
+        _cleanup_hashmap_free_ Hashmap *images = NULL;
+        r = image_discover(m->runtime_scope, IMAGE_MACHINE, NULL, &images);
         if (r < 0)
                 return r;
 
@@ -492,6 +508,7 @@ static int method_list_images(sd_bus_message *message, void *userdata, sd_bus_er
         if (r < 0)
                 return r;
 
+        Image *image;
         HASHMAP_FOREACH(image, images) {
                 _cleanup_free_ char *p = NULL;
 
@@ -901,19 +918,23 @@ const sd_bus_vtable manager_vtable[] = {
         SD_BUS_METHOD_WITH_ARGS("CreateMachine",
                                 SD_BUS_ARGS("s", name, "ay", id, "s", service, "s", class, "u", leader, "s", root_directory, "a(sv)", scope_properties),
                                 SD_BUS_RESULT("o", path),
-                                method_create_machine, 0),
+                                method_create_machine,
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("CreateMachineWithNetwork",
                                 SD_BUS_ARGS("s", name, "ay", id, "s", service, "s", class, "u", leader, "s", root_directory, "ai", ifindices, "a(sv)", scope_properties),
                                 SD_BUS_RESULT("o", path),
-                                method_create_machine_with_network, 0),
+                                method_create_machine_with_network,
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("RegisterMachine",
                                 SD_BUS_ARGS("s", name, "ay", id, "s", service, "s", class, "u", leader, "s", root_directory),
                                 SD_BUS_RESULT("o", path),
-                                method_register_machine, 0),
+                                method_register_machine,
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("RegisterMachineWithNetwork",
                                 SD_BUS_ARGS("s", name, "ay", id, "s", service, "s", class, "u", leader, "s", root_directory, "ai", ifindices),
                                 SD_BUS_RESULT("o", path),
-                                method_register_machine_with_network, 0),
+                                method_register_machine_with_network,
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("UnregisterMachine",
                                 SD_BUS_ARGS("s", name),
                                 SD_BUS_NO_RESULT,
@@ -948,7 +969,7 @@ const sd_bus_vtable manager_vtable[] = {
                                 SD_BUS_ARGS("s", name),
                                 SD_BUS_RESULT("h", pty, "s", pty_path),
                                 method_open_machine_pty,
-                                0),
+                                SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD_WITH_ARGS("OpenMachineLogin",
                                 SD_BUS_ARGS("s", name),
                                 SD_BUS_RESULT("h", pty, "s", pty_path),
@@ -1286,8 +1307,7 @@ int manager_unit_is_active(Manager *manager, const char *unit, sd_bus_error *ret
                         &reply,
                         "s");
         if (r < 0) {
-                if (sd_bus_error_has_names(&error, SD_BUS_ERROR_NO_REPLY,
-                                                   SD_BUS_ERROR_DISCONNECTED))
+                if (bus_error_is_connection(&error))
                         return true;
 
                 if (sd_bus_error_has_names(&error, BUS_ERROR_NO_SUCH_UNIT,
@@ -1323,8 +1343,7 @@ int manager_job_is_active(Manager *manager, const char *path, sd_bus_error *rete
                         &reply,
                         "s");
         if (r < 0) {
-                if (sd_bus_error_has_names(&error, SD_BUS_ERROR_NO_REPLY,
-                                                   SD_BUS_ERROR_DISCONNECTED))
+                if (bus_error_is_connection(&error))
                         return true;
 
                 if (sd_bus_error_has_name(&error, SD_BUS_ERROR_UNKNOWN_OBJECT))
