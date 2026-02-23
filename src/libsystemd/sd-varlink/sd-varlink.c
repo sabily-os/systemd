@@ -2785,7 +2785,7 @@ _public_ int sd_varlink_error_invalid_parameter(sd_varlink *v, sd_json_variant *
         if (sd_json_variant_is_string(parameters)) {
                 _cleanup_(sd_json_variant_unrefp) sd_json_variant *parameters_obj = NULL;
 
-                r = sd_json_buildo(&parameters_obj,SD_JSON_BUILD_PAIR_VARIANT("parameter", parameters));
+                r = sd_json_buildo(&parameters_obj, SD_JSON_BUILD_PAIR_VARIANT("parameter", parameters));
                 if (r < 0)
                         return r;
 
