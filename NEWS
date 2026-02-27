@@ -10,9 +10,9 @@ CHANGES WITH 260 in spe:
 
           The following components have been removed:
 
-          * systemd-rc-local-generator and rc-local.service,
-          * systemd-sysv-generator,
-          * systemd-sysv-install (hook for systemctl enable/disable/is-enabled).
+          • systemd-rc-local-generator and rc-local.service,
+          • systemd-sysv-generator,
+          • systemd-sysv-install (hook for systemctl enable/disable/is-enabled).
 
           The corresponding meson options '-Drc-local=', '-Dsysvinit-path=',
           and '-Dsysvrcnd-path=' are deprecated, and will be dropped in a future
@@ -26,16 +26,17 @@ CHANGES WITH 260 in spe:
           too and will be dropped in a future release.
 
         * Required versions of various dependencies have been raised:
-          cryptsetup 2.0.1/2.3.0 → 2.4.0,
-          elfutils 158 → 177,
-          libblkid 2.24 → 2.37,
-          libseccomp 2.3.1 → 2.4.0,
-          glibc 2.31 → 2.34,
-          libxcrypt or libcrypt from glibc → libxcrypt 4.4.0 only,
-          OpenSSL 1.1.0 → 3.0.0,
-          Python 3.7.0 → 3.9.0.
 
-          The Linux kernel version requirements have been updated too:
+          • cryptsetup 2.0.1/2.3.0 → 2.4.0,
+          • elfutils 158 → 177,
+          • libblkid 2.24 → 2.37,
+          • libseccomp 2.3.1 → 2.4.0,
+          • glibc 2.31 → 2.34,
+          • libxcrypt or libcrypt from glibc → libxcrypt 4.4.0 only,
+          • OpenSSL 1.1.0 → 3.0.0,
+          • Python 3.7.0 → 3.9.0.
+
+        * The Linux kernel version requirements have been updated too:
           baseline 5.4 → 5.10, recommended baseline 5.7 → 5.14, 6.6 for full
           functionality. Code for compatibility with versions older than the
           baseline has been removed.
@@ -65,8 +66,8 @@ CHANGES WITH 260 in spe:
           support for the old way using protofiles.
 
         * The org.systemd.login1.Manager D-Bus interface has a minor API break.
-          The 'CanPowerOff()', 'CanReboot()', 'CanSuspend()', etc. family of
-          methods have introduced new return values which may break downstream
+          The CanPowerOff(), CanReboot(), CanSuspend(), etc. family of methods
+          have introduced new return values which may break downstream
           consumers, such as desktop environments. The new return values more
           precisely communicate the status of inhibitors: 'inhibited',
           'inhibitor-blocked', and 'challenge-inhibitor-blocked'. This allows
@@ -75,11 +76,11 @@ CHANGES WITH 260 in spe:
 
         New system interfaces and components:
 
-        * The os-release(5) gained a new field FANCY_NAME= that is similar
-          to PRETTY_NAME= but may contain ANSI sequences such as Unicode
-          emojis. The new field is also defined to NOT contain any version
-          specification, providing better separation between the OS name
-          and version.
+        * The os-release(5) gained a new field FANCY_NAME= that is similar to
+          PRETTY_NAME= but may contain ANSI sequences, and non-ASCII Unicode
+          glyphs. The new field is also defined to NOT contain any version
+          specification, providing better separation between the OS name and
+          version.
 
           The systemd manager, systemd-hostnamed, and hostnamectl will now
           show FANCY_NAME= in preference to PRETTY_NAME=.
@@ -90,26 +91,36 @@ CHANGES WITH 260 in spe:
           https://systemd.io/PORTABILITY_AND_STABILITY/ for details.
 
         * Services providing a public Varlink interface can be symlinked under
-          /run/varlink/registry/, allowing services to be enumerated.
-          'varlinkctl list-registry' can be used to list running services.
+          /run/varlink/registry/, allowing well-known services to be
+          enumerated. 'varlinkctl list-registry' can be used to list available
+          services. This is particularly useful in context of the Varlink HTTP
+          bridge (https://github.com/mvo5/varlink-http-bridge), which may
+          expose all services whose sockets are linked in this directory.
 
-        * A new "metrics" or "report" framework has been defined. Any component
-          can hook into the reporting framework by providing a varlink endpoint
-          under /run/systemd/report. Such a hookup has been added to the manager.
+        * A new "metrics" or "report" framework has been defined. Any system
+          component can hook into the reporting framework by providing a
+          Varlink endpoint under /run/systemd/report/.
 
           systemd-report is a new command line tool which collects the reports
-          from all endpoints and prints them in JSON format.
+          from all endpoints and combines them in JSON format.
 
           The details of the structure of the reports should be considered
           EXPERIMENTAL at this point. We reserve the right to make incompatible
           changes to the JSON structure and/or place additional requirements.
 
-        * A new "mstack" feature has been introduced, to allowing defining an
-          overlayfs by structuring the content of an ".mstack/" directory
-          following this specification.
+          Currently, two components provide metrics this way: systemd-networkd
+          and the system service manager.
 
-        * A new 'verity' NVPCR has been added. Various components measure
-          dm-verity images to it upon loading.
+        * A new "mstack" feature has been introduced, to allowing defining an
+          overlayfs and bind mount arrangement by structuring the content of an
+          ".mstack/" directory that follows this specification. MStacks are
+          useful to invoke services and containers from a directory that fully
+          self describes its intended way of use.
+
+        * A new 'verity' TPM NvPCR has been added. Various components measure
+          dm-verity images to it upon loading. This includes
+          systemd-veritysetup (controllable via the new 'tpm2-measure-nvpcr='
+          /etc/veritytab setting), and the DDI dissection logic.
 
         * A canonical set of hwid files for automated DeviceTree mapping in
           UKIs is now shipped under /usr/lib/systemd/boot/hwids/<efi-arch>/.
@@ -120,12 +131,12 @@ CHANGES WITH 260 in spe:
           present on the system at build time. A first set of hwid files for
           arm64 Snapdragon devices has been imported.
 
-        Changes in the system and user managers:
+        Changes in the system and service manager:
 
-        * Systemd now uses ANSI CSI 18 sequence to query terminal size. This
-          allows the query to be made without changing the position of the
-          cursor. Terminal emulators which do not yet support the sequence are
-          encouraged to do so.
+        * systemd now uses the CSI 18 terminal sequence to query terminal
+          size. This allows the query to be made without changing the position
+          of the cursor. Terminal emulators which do not yet support the
+          sequence are encouraged to do so.
 
         * Service units gained a RefreshOnReload= setting that configures
           whether extensions and credentials are to be refreshed when the unit
@@ -133,25 +144,30 @@ CHANGES WITH 260 in spe:
 
         * A new unit setting BindNetworkInterface= has been introduced that
           automatically binds all sockets created by the unit to a specific
-          network interface.
+          network interface. This is generally useful, but in particular for
+          VRF setups.
 
         * Two new unit settings ConditionPathIsSocket= and AssertPathIsSocket=
           can be used to skip or fail the unit if the given path is not a
           socket.
 
         * A new unit setting RootMStack= has been introduced, to support the
-          new "mstack" feature for services.
+          new "mstack" feature for services (see above).
 
         * The unit setting PrivateUsers= gained a new possible value "managed",
           which automatically assigns a dynamic and transient range of 65536
-          UIDs/GIDs to the unit.
+          UIDs/GIDs to the unit, acquired via systemd-nsresourced.
 
-        * The implementation for PrivateUsers=full has been updated map the
+        * The implementation for PrivateUsers=full has been updated to map the
           full range of IDs. The workaround to allow nested systemd older than
           257 to correctly detect that it is under such a mapping has been
           dropped.
 
         * EnqueueMarkedJobs() D-Bus method now has a Varlink counterpart.
+
+        * systemctl gained a new 'enqueue-marked-jobs' verb, which calls the
+          EnqueueMarkedJobs() D-Bus method. The '--marked' parameter, which was
+          previously used for the same purpose, is now deprecated.
 
         * SetProperties() D-Bus method now has a Varlink counterpart. For now,
           it only supports setting the Markers= property.
@@ -159,7 +175,14 @@ CHANGES WITH 260 in spe:
         * New 'needs-start' and 'needs-stop' settings are now supported for the
           Markers= property.
 
-        Changes in udev:
+        * The CPUSchedulingPolicy= service setting now supports the new value
+          "ext" for enabling the SCHED_EXT scheduler recently added to the
+          Linux kernel.
+
+        * A new MemoryTHP= service setting has been added that controls
+          per-service Transparent Huge Pages (THP) support.
+
+        Changes in systemd-udevd:
 
         * Permissions for /dev/ptp* are now set to 0664 (previously 0660),
           allowing unprivileged read-only access. This relies on the kernel fix
@@ -182,8 +205,8 @@ CHANGES WITH 260 in spe:
           low brightness values at runtime independently of the systemd clamp
           which only applies during boot.
 
-        * A new property ID_INTEGRATION is now exposed on devices that have
-          ID_BUS defined. This variable can be set to 'internal' when the
+        * A new udev property ID_INTEGRATION= is now exposed on devices that
+          have ID_BUS= defined. This variable can be set to 'internal' when the
           device is integral part of the system or 'external' otherwise.
           Internal buses like PCI, I2C, SPI... imply 'internal' and external
           buses like bluetooth imply 'external'. For USB the 'removable'
@@ -191,8 +214,8 @@ CHANGES WITH 260 in spe:
           result: 'fixed' implies 'internal' and 'removable' or 'unknown'
           implies 'external'.
 
-        * ID_INPUT_JOYSTICK_INTEGRATION property has been dropped in favour of
-          ID_INTEGRATION because it was never used and the new variable covers
+        * ID_INPUT_JOYSTICK_INTEGRATION= property has been dropped in favour of
+          ID_INTEGRATION= because it was never used and the new variable covers
           the idea that variable was intended for better.
 
         Changes in systemd-networkd:
@@ -211,6 +234,15 @@ CHANGES WITH 260 in spe:
           utilizes those varlink interfaces in place of direct RTNL messages
           for better interaction with networkd.
 
+        * .link files gained new ScatterGather=, ScatterGatherFragmentList=,
+          TCPECNSegmentationOffload=, TCPMangleIdSegmentationOffload=,
+          GenericReceiveOffloadList=, GenericReceiveOffloadUDPForwarding=
+          options for configuring various details of Ethernet devices.
+
+        * systemd-networkd's Varlink and JSON interfaces will now report IP
+          addresses both as integer array (as before) and as human readable
+          string (new addition).
+
         Changes in systemd-boot and the stub:
 
         * The timeout in the boot menu can be configured with the
@@ -221,63 +253,59 @@ CHANGES WITH 260 in spe:
           assessment logic, and will skip entries that have the tries-left counter
           set to zero.
 
-        * bootctl's varlink interface gained a new Install() method for performing
+        * bootctl's Varlink interface gained a new Install() method for performing
           systemd-boot installation/upgrade via IPC calls.
 
-        Changes in libsystemd:
+        * bootctl gained a new --efi-boot-option-description-with-device=yes
+          switch which augments the EFI boot option description registered with
+          the firmware to include information about the disk used for
+          booting. This is useful when installing multiple OSes on the same
+          system, but on different disks. (Example: install a main OS on the
+          SSD of a laptop, plus another one on an USB stick.)
 
-        * The varlink implementation now supports SD_VARLINK_ANY as a wildcard
+        Changes in sd-varlink:
+
+        * The Varlink implementation now supports SD_VARLINK_ANY as a wildcard
           type. This is useful to declare generic interfaces which need to
           support multiple types.
 
+        * When sd_varlink_connect_url() is invoked with an unrecognized URL
+          scheme, but an executable named after the scheme exists under
+          /usr/lib/systemd/varlink-bridges/, it is invoked and receives an
+          AF_UNIX socktpair() via the usual $LISTEN_FDS socket activation
+          protocol. The aforementioned Varlink HTTP bridge project makes use of
+          this to allow any local Varlink client (including varlinkctl) to
+          contact remote Varlink services via HTTP. The concept is entirely
+          generic however, and can be used to plug in arbitrary other transport
+          protocols, proxies, or connection setup mechanisms.
+
         Changes in systemd-resolved:
+
+        * systemd-resolved's .delegate files learnt a new setting FirewallMark=
+          to set the Linux network stack's "firewall mark" value for all DNS
+          traffic generated by the delegation.
+
+        * resolvectl now uses Varlink to connect to systemd-resolved.
 
         * Queries done through nss-resolve can be limited to a specific
           interface with the $SYSTEMD_NSS_RESOLVE_INTERFACE environment
           variable.
 
-        * systemd-resolved now supports marking of packets used for DNS
-          requests with a firewall mark.
-
-        * resolvectl now uses varlink to connect to systemd-resolved.
-
         * systemd-resolved now supports ifindex=0 in the BrowseServices IPC API,
           to allow browsing all mDNS interfaces in one call.
 
-        Changes in other components:
-
-        * systemd-repart gained basic support for integrity checks of encrypted
-          volumes. Two new options Integrity= and IntegrityAlgorithm= can be
-          used to configure integrity checks for LUKS volumes.
-
-        * Image dissection policies have been extended to allow restricting
-          file system types and requiring integrity checks for encrypted volumes
-          with a new 'encryptedwithinegrity' policy.
-
-        * systemd-dissect gained a --copy-ownership= switch to configure
-          ownership of copied files.
-
-        * systemd-portabled now also runs as a user service. Unprivileged users
-          can run portable services (on sufficiently fresh kernels).
-
-        * systemd-portabled will now generate a policy and pin the image for a
-          portable service, so that the image cannot be changed later without a
-          reattach.
-
-        * systemd-keyutil gained an 'extract-certificate' verb to print the X.509
-          certificate.
+        Changes in systemd-sysupdate/systemd-sysupdated:
 
         * systemd-sysupdate gained a new 'acquire' verb, allowing the download
           and installation or update steps to be done separately.
 
-        * Support for polkit authorization has been added to systemd-sysext and
-          varlinkctl.
+        * systemd-sysupdate will now refuse processing SHA256SUMS manifests if
+          they list a file BEST-BEFORE- suffixed by a date that is already in
+          the past, as a simple mechanism to detect freshness.
 
-        * A polkit policy was added for systemd-ask-password, allowing it to be
-          used by unprivileged callers.
+        * systemd-sysupdate now can mark partitions as partially downloaded.
 
-        * systemd-inhibit --list option gained support for JSON output
-          and filtering with --what= , --who=, --why=, and --mode=.
+        Changes in systemd-vmspawn:
 
         * systemd-vmspawn gained support for registering with systemd-machined
           in the user session. New options --user/--system control which
@@ -287,16 +315,107 @@ CHANGES WITH 260 in spe:
           --ephemeral option. This is similar to the functionality provided via
           the same switch in systemd-nspawn.
 
-        * systemctl gained a new 'enqueue-marked-jobs' verb, which calls the
-          EnqueueMarkedJobs() D-Bus method. The '--marked' parameter, which was
-          previously used for the same purpose, is now deprecated.
+        * systemd-vmspawn gained a new switch --image-format= for selecting the
+          image format (i.e. support qcow2 in additin to raw) to boot
+          from. --extra-drive= now takes the image format as a colon separated
+          parameter.
+
+        Changes in systemd-nsresourced/systemd-mountfsd:
+
+        * The MakeDirectory() Varlink IPC call provided by systemd-mountfsd now
+          accepts a "mode" parameter for configuring the access mode of the
+          newly created directory. The MountImage() call gained a new
+          "mountOptions" parameter for configuring mount options for the
+          various partitions of a DDI explicitly. The call will now also report
+          via a new "singleFileSystem" field in the response whether it is
+          processing a DDI lacking a GPT envelope, and consisting of a raw file
+          system only. A new input parameter "relaxExtensionReleaseChecks"
+          controls whether to enforce extension release checks.
+
+        * systemd-nsresourced's BPF-LSM based security policy on user
+          namespaces it delegates UID ranges too is relaxed: processes in such
+          namespaces may now freely access to inodes owned by UIDs/GIDs outside
+          of the transient UID range. This reflects the fact that the security
+          policy exists to ensure ownership of inodes by transient UIDs is
+          never persisted on disk.
+
+        * systemd-nsresourced can now delegate multiples of additional 64K
+          ranges of UIDs/GIDs to user namespaces, on request. This permits
+          nesting of user namespace enabled containers with transient UID
+          ranges.
+
+        * systemd-nsresourced now supports a new type user namespace UID
+          delegation: only the client's UID is mapped. This is very similar to
+          what the kernel allows anyway as unprivileged delegation without
+          systemd-nsresourced involvement, however, can be combined with
+          multiple additional 64K ranges (see above).
+
+        * systemd-nsresourced may now optionally map the "foreign" UID/GID
+          range to itself for user namespaces it delegates transient UIDs/GIDs
+          to. This opens up the concept for nested containers.
+
+        * systemd-nsresourced's and systemd-mountfsd's Varlink sockets may now
+          be mounted into container trees, to permit nested use of their
+          functionality. This can be used automatically in systemd-nspawn's
+          --private-users-delegate= option.
+
+        Changes in systemd-logind:
+
+        * systemd-logind/systemd-udevd gained support for a new "xaccess"
+          concept for delegating access to specific devices to users with
+          specially marked sessions. The augments the "uaccess" logic that
+          provides device access to users with foreground sessions. The primary
+          usecase for this is to give access to GPU render devices to local
+          graphical sessions for remote users, i.e. which are not attached to
+          any local seat. Sessions are configured via the PAM environment
+          variable XDG_SESSION_EXTRA_DEVICE_ACCESS= for this logic.
+
+        * systemd-inhibit --list option gained support for JSON output
+          and filtering with --what= , --who=, --why=, and --mode=.
+
+        Changes in systemd-portabled:
+
+        * systemd-portabled now also runs as a user service. Unprivileged users
+          can run portable services (on sufficiently fresh
+          kernels). portablectl gained a pair of switches --user/--system to
+          explicitly select which service instance to talk to.
+
+        * systemd-portabled will now generate a policy and pin the image for a
+          portable service, so that the image cannot be changed later without a
+          reattach.
+
+        Changes in other components:
+
+        * systemd-repart gained basic support for dm-integrity protection of
+          encrypted volumes. Two new options Integrity= and IntegrityAlgorithm=
+          can be used to configure integrity checks for LUKS volumes.
+
+        * Image dissection policies have been extended to allow restricting
+          file system types and requiring integrity checks for encrypted
+          volumes with a new 'encryptedwithintegrity' policy.
+
+        * systemd-dissect gained a --copy-ownership= switch to configure
+          ownership of copied files.
+
+        * systemd-keyutil gained an 'extract-certificate' verb to print the
+          X.509 certificate. The existing 'public' verb has been renamed to
+          'extract-public' as it works analogously. (The old name remains
+          available for compatibility.)
+
+        * Support for interactive polkit authorization has been added to
+          systemd-sysext and varlinkctl.
+
+        * A polkit policy was added for systemd-ask-password, allowing it to be
+          used by unprivileged callers.
 
         * journalctl now implements a Varlink interface that exposes a
           GetEntries() method, which allows retrieving journal entries.
 
-        * systemd-importd gained support for downloading OCI images. They will
-          be stored locally in the new "mstack" format, which then can be used
-          by various components.
+        * systemd-importd gained support for downloading OCI images ("importctl
+          pull-oci"). They will be stored locally as "mstack" images, which
+          then can be used by various components, for example be run as system
+          services via RootMStack= in unit files, or as systemd-nspawn
+          containers via --mstack= (see below).
 
         * systemd-nspawn gained a new --mstack= parameter to support the new
           "mstack" feature for containers.
@@ -320,15 +439,29 @@ CHANGES WITH 260 in spe:
         * Internal code dealing with processes has been updated to use pidfds
           in many places.
 
+        * busctl's 'wait' verb now honours --limit-messages= too.
+
+        * systemd-cryptsetup gained support for a new fixate-volume-key=
+          option, that can be used to pin a specific encrypted volume to an
+          /etc/crypttab entry via its volume key (more precisely a hash derived
+          from it). systemd-repart will assist generating this information.
+
+        * systemd-sysext/systemd-confext's "refresh" will now by default try to
+          suppress any operation in case no images where added, removed or
+          changed. To force a umount/mount operation in this case (i.e. get
+          back to the status quo ante) a new --always-refresh= option has been
+          added.
+
+        * systemd-oomd acquired "prekill hook" functionality, permitting other
+          system components to synchronously hook into the OOM killing logic,
+          by registering a Varlink socket in a special directory.
+
         Changes in units:
 
         * runlevel[0-6].target units that were removed in v258 have been
           restored and can be enabled with the new -Dcompat-sysv-interfaces=yes
           meson option. The installation of legacy.conf for tmpfiles is now
           also conditionalized under the same option.
-
-        * systemd-portabled now runs also in the user session in the new
-          systemd-portabled.service unit.
 
         * getty@.service gained an [Install] and must now be explicitly enabled
           to be active.
