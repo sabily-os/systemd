@@ -6,6 +6,7 @@
 #include "kill.h"
 #include "mount.h"
 #include "numa-util.h"
+#include "path.h"
 #include "process-util.h"
 #include "service.h"
 #include "tests.h"
@@ -62,6 +63,12 @@ TEST(unit_enums_idl) {
 
         /* ServiceContext enums */
         TEST_IDL_ENUM(ServiceType, service_type, vl_type_ServiceType);
+
+        /* PathContext enums */
+        TEST_IDL_ENUM(PathType, path_type, vl_type_PathType);
+
+        /* PathRuntime enums */
+        TEST_IDL_ENUM(PathResult, path_result, vl_type_PathResult);
 
         /* UnitContext enums */
         TEST_IDL_ENUM(CollectMode, collect_mode, vl_type_CollectMode);
