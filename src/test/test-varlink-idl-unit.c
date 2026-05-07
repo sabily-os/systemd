@@ -75,6 +75,9 @@ TEST(unit_enums_idl) {
         /* ScopeRuntime enums */
         TEST_IDL_ENUM(ScopeResult, scope_result, vl_type_ScopeResult);
 
+        /* SwapRuntime enums */
+        TEST_IDL_ENUM(SwapResult, swap_result, vl_type_SwapResult);
+
         /* UnitContext enums */
         TEST_IDL_ENUM(CollectMode, collect_mode, vl_type_CollectMode);
         TEST_IDL_ENUM(EmergencyAction, emergency_action, vl_type_EmergencyAction);
