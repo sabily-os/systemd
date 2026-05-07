@@ -1215,7 +1215,7 @@ static int verb_remove_image(int argc, char *argv[], uintptr_t _data, void *user
         return 0;
 }
 
-VERB(verb_set_limit, "set-limit", "[NAME|PATH] LIMIT", 3, 3, 0,
+VERB(verb_set_limit, "set-limit", "[NAME|PATH] LIMIT", 2, 3, 0,
      "Set image or pool size limit (disk quota)");
 static int verb_set_limit(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
