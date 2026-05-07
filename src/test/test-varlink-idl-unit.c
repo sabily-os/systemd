@@ -8,7 +8,9 @@
 #include "numa-util.h"
 #include "path.h"
 #include "process-util.h"
+#include "scope.h"
 #include "service.h"
+#include "swap.h"
 #include "tests.h"
 #include "test-varlink-idl-util.h"
 #include "unit.h"
@@ -69,6 +71,9 @@ TEST(unit_enums_idl) {
 
         /* PathRuntime enums */
         TEST_IDL_ENUM(PathResult, path_result, vl_type_PathResult);
+
+        /* ScopeRuntime enums */
+        TEST_IDL_ENUM(ScopeResult, scope_result, vl_type_ScopeResult);
 
         /* UnitContext enums */
         TEST_IDL_ENUM(CollectMode, collect_mode, vl_type_CollectMode);
