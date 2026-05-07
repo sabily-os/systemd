@@ -1594,7 +1594,7 @@ static int client_handle_offer_or_rapid_ack(sd_dhcp_client *client, DHCPMessage 
 
         dhcp_lease_set_timestamp(lease, timestamp);
 
-        dhcp_lease_unref_and_replace(client->lease, lease);
+        dhcp_lease_unref_and_replace_new_ref(client->lease, lease);
 
         if (client->lease->rapid_commit) {
                 log_dhcp_client(client, "ACK");
@@ -1678,7 +1678,7 @@ static int client_handle_ack(sd_dhcp_client *client, DHCPMessage *message, size_
         else
                 r = SD_DHCP_CLIENT_EVENT_IP_CHANGE;
 
-        dhcp_lease_unref_and_replace(client->lease, lease);
+        dhcp_lease_unref_and_replace_new_ref(client->lease, lease);
 
         log_dhcp_client(client, "ACK");
         return r;
@@ -2281,7 +2281,7 @@ sd_event* sd_dhcp_client_get_event(sd_dhcp_client *client) {
 int sd_dhcp_client_attach_device(sd_dhcp_client *client, sd_device *dev) {
         assert_return(client, -EINVAL);
 
-        return device_unref_and_replace(client->dev, dev);
+        return device_unref_and_replace_new_ref(client->dev, dev);
 }
 
 static sd_dhcp_client* dhcp_client_free(sd_dhcp_client *client) {
