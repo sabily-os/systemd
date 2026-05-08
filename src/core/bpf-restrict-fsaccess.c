@@ -75,7 +75,7 @@ assert_cc(offsetof(struct restrict_fsaccess_bss, protected_map_id_bss) ==
         [RESTRICT_FILESYSTEM_ACCESS_LINK_BPF_GUARD]         = (obj)->links.restrict_fsaccess_bpf_guard,                  \
 }
 
-static bool dm_verity_require_signatures(void) {
+bool dm_verity_require_signatures(void) {
         int r;
 
         r = read_boolean_file("/sys/module/dm_verity/parameters/require_signatures");
@@ -103,7 +103,7 @@ static int get_root_s_dev(uint32_t *ret) {
         return 0;
 }
 
-static int prepare_restrict_fsaccess_bpf(struct restrict_fsaccess_bpf **ret) {
+int bpf_restrict_fsaccess_prepare(struct restrict_fsaccess_bpf **ret) {
         _cleanup_(restrict_fsaccess_bpf_freep) struct restrict_fsaccess_bpf *obj = NULL;
         int r;
 
@@ -149,7 +149,7 @@ bool bpf_restrict_fsaccess_supported(void) {
                 return (supported = false);
         }
 
-        r = prepare_restrict_fsaccess_bpf(&obj);
+        r = bpf_restrict_fsaccess_prepare(&obj);
         if (r < 0)
                 return (supported = false);
 
@@ -371,7 +371,7 @@ int bpf_restrict_fsaccess_setup(Manager *m) {
                                        "RestrictFileSystemAccess= requires the kernel to enforce dm-verity signatures. "
                                        "Set dm_verity.require_signatures=1 on the kernel command line.");
 
-        r = prepare_restrict_fsaccess_bpf(&obj);
+        r = bpf_restrict_fsaccess_prepare(&obj);
         if (r < 0)
                 return r;
 
@@ -477,6 +477,10 @@ int bpf_restrict_fsaccess_serialize(Manager *m, FILE *f, FDSet *fds) {
 
 #else /* ! BPF_FRAMEWORK || ! HAVE_LSM_INTEGRITY_TYPE */
 
+bool dm_verity_require_signatures(void) {
+        return false;
+}
+
 bool bpf_restrict_fsaccess_supported(void) {
         return false;
 }
@@ -487,6 +491,10 @@ int bpf_restrict_fsaccess_setup(Manager *m) {
 
         return log_warning_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
                                  "bpf-restrict-fsaccess: RestrictFileSystemAccess= requested but BPF framework is not compiled in.");
+}
+
+int bpf_restrict_fsaccess_prepare(struct restrict_fsaccess_bpf **ret) {
+        return -EOPNOTSUPP;
 }
 
 int bpf_restrict_fsaccess_populate_guard(struct restrict_fsaccess_bpf *obj) {
