@@ -525,124 +525,6 @@ static int parse_argv(int argc, char *argv[]) {
 
                 switch (c) {
 
-                case 'h':
-                        return help();
-
-                case ARG_VERSION:
-                        return version();
-
-                case ARG_NO_PAGER:
-                        arg_pager_flags |= PAGER_DISABLE;
-                        break;
-
-                case 'e':
-                        arg_pager_flags |= PAGER_JUMP_TO_END;
-                        break;
-
-                case 'f':
-                        arg_follow = true;
-                        break;
-
-                case 'o':
-                        if (streq(optarg, "help"))
-                                return DUMP_STRING_TABLE(output_mode, OutputMode, _OUTPUT_MODE_MAX);
-
-                        arg_output = output_mode_from_string(optarg);
-                        if (arg_output < 0)
-                                return log_error_errno(arg_output, "Unknown output format '%s'.", optarg);
-
-                        if (IN_SET(arg_output, OUTPUT_EXPORT, OUTPUT_JSON, OUTPUT_JSON_PRETTY, OUTPUT_JSON_SSE, OUTPUT_JSON_SEQ, OUTPUT_CAT))
-                                arg_quiet = true;
-
-                        if (OUTPUT_MODE_IS_JSON(arg_output))
-                                arg_json_format_flags = output_mode_to_json_format_flags(arg_output) | SD_JSON_FORMAT_COLOR_AUTO;
-                        else
-                                arg_json_format_flags = SD_JSON_FORMAT_OFF;
-
-                        break;
-
-                case 'l':
-                        arg_full = true;
-                        break;
-
-                case ARG_NO_FULL:
-                        arg_full = false;
-                        break;
-
-                case 'a':
-                        arg_all = true;
-                        break;
-
-                case 'n':
-                        r = parse_lines(optarg ?: argv[optind], !optarg);
-                        if (r < 0)
-                                return r;
-                        if (r > 0 && !optarg)
-                                optind++;
-
-                        break;
-
-                case ARG_NO_TAIL:
-                        arg_no_tail = true;
-                        break;
-
-                case ARG_TRUNCATE_NEWLINE:
-                        arg_truncate_newline = true;
-                        break;
-
-                case ARG_NEW_ID128:
-                        arg_action = ACTION_NEW_ID128;
-                        break;
-
-                case 'q':
-                        arg_quiet = true;
-                        break;
-
-                case 'm':
-                        arg_merge = true;
-                        break;
-
-                case ARG_THIS_BOOT:
-                        arg_boot = true;
-                        arg_boot_id = SD_ID128_NULL;
-                        arg_boot_offset = 0;
-                        break;
-
-                case 'b':
-                        arg_boot = true;
-                        arg_boot_id = SD_ID128_NULL;
-                        arg_boot_offset = 0;
-
-                        if (optarg) {
-                                r = parse_id_descriptor(optarg, &arg_boot_id, &arg_boot_offset);
-                                if (r < 0)
-                                        return log_error_errno(r, "Failed to parse boot descriptor '%s'", optarg);
-
-                                arg_boot = r;
-
-                        } else if (optind < argc) {
-                                /* Hmm, no argument? Maybe the next word on the command line is supposed to be the
-                                 * argument? Let's see if there is one and is parsable as a boot descriptor... */
-                                r = parse_id_descriptor(argv[optind], &arg_boot_id, &arg_boot_offset);
-                                if (r >= 0) {
-                                        arg_boot = r;
-                                        optind++;
-                                }
-                        }
-                        break;
-
-                case ARG_LIST_BOOTS:
-                        arg_action = ACTION_LIST_BOOTS;
-                        break;
-
-                case ARG_LIST_INVOCATIONS:
-                        arg_action = ACTION_LIST_INVOCATIONS;
-                        break;
-
-                case 'k':
-                        arg_dmesg = true;
-                        break;
-
                 case ARG_SYSTEM:
                         arg_journal_type |= SD_JOURNAL_SYSTEM;
                         break;
@@ -657,28 +539,8 @@ static int parse_argv(int argc, char *argv[]) {
                                 return r;
                         break;
 
-                case ARG_NAMESPACE:
-                        if (streq(optarg, "*")) {
-                                arg_namespace_flags = SD_JOURNAL_ALL_NAMESPACES;
-                                arg_namespace = mfree(arg_namespace);
-                        } else if (startswith(optarg, "+")) {
-                                arg_namespace_flags = SD_JOURNAL_INCLUDE_DEFAULT_NAMESPACE;
-                                r = free_and_strdup_warn(&arg_namespace, optarg + 1);
-                                if (r < 0)
-                                        return r;
-                        } else if (isempty(optarg)) {
-                                arg_namespace_flags = 0;
-                                arg_namespace = mfree(arg_namespace);
-                        } else {
-                                arg_namespace_flags = 0;
-                                r = free_and_strdup_warn(&arg_namespace, optarg);
-                                if (r < 0)
-                                        return r;
-                        }
-                        break;
-
-                case ARG_LIST_NAMESPACES:
-                        arg_action = ACTION_LIST_NAMESPACES;
+                case 'm':
+                        arg_merge = true;
                         break;
 
                 case 'D':
@@ -719,14 +581,44 @@ static int parse_argv(int argc, char *argv[]) {
                                 return r;
                         break;
 
-                case 'c':
-                        r = free_and_strdup_warn(&arg_cursor, optarg);
-                        if (r < 0)
-                                return r;
+                case ARG_NAMESPACE:
+                        if (streq(optarg, "*")) {
+                                arg_namespace_flags = SD_JOURNAL_ALL_NAMESPACES;
+                                arg_namespace = mfree(arg_namespace);
+                        } else if (startswith(optarg, "+")) {
+                                arg_namespace_flags = SD_JOURNAL_INCLUDE_DEFAULT_NAMESPACE;
+                                r = free_and_strdup_warn(&arg_namespace, optarg + 1);
+                                if (r < 0)
+                                        return r;
+                        } else if (isempty(optarg)) {
+                                arg_namespace_flags = 0;
+                                arg_namespace = mfree(arg_namespace);
+                        } else {
+                                arg_namespace_flags = 0;
+                                r = free_and_strdup_warn(&arg_namespace, optarg);
+                                if (r < 0)
+                                        return r;
+                        }
                         break;
 
-                case ARG_CURSOR_FILE:
-                        r = free_and_strdup_warn(&arg_cursor_file, optarg);
+                case 'S':
+                        r = parse_timestamp(optarg, &arg_since);
+                        if (r < 0)
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Failed to parse timestamp: %s", optarg);
+                        arg_since_set = true;
+                        break;
+
+                case 'U':
+                        r = parse_timestamp(optarg, &arg_until);
+                        if (r < 0)
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Failed to parse timestamp: %s", optarg);
+                        arg_until_set = true;
+                        break;
+
+                case 'c':
+                        r = free_and_strdup_warn(&arg_cursor, optarg);
                         if (r < 0)
                                 return r;
                         break;
@@ -737,83 +629,78 @@ static int parse_argv(int argc, char *argv[]) {
                                 return r;
                         break;
 
-                case ARG_SHOW_CURSOR:
-                        arg_show_cursor = true;
-                        break;
-
-                case ARG_HEADER:
-                        arg_action = ACTION_PRINT_HEADER;
-                        break;
-
-                case ARG_VERIFY:
-                        arg_action = ACTION_VERIFY;
-                        break;
-
-                case ARG_DISK_USAGE:
-                        arg_action = ACTION_DISK_USAGE;
-                        break;
-
-                case ARG_VACUUM_SIZE:
-                        r = parse_size(optarg, 1024, &arg_vacuum_size);
+                case ARG_CURSOR_FILE:
+                        r = free_and_strdup_warn(&arg_cursor_file, optarg);
                         if (r < 0)
-                                return log_error_errno(r, "Failed to parse vacuum size: %s", optarg);
-
-                        arg_action = arg_action == ACTION_ROTATE ? ACTION_ROTATE_AND_VACUUM : ACTION_VACUUM;
+                                return r;
                         break;
 
-                case ARG_VACUUM_FILES:
-                        r = safe_atou64(optarg, &arg_vacuum_n_files);
+                case ARG_THIS_BOOT:
+                        arg_boot = true;
+                        arg_boot_id = SD_ID128_NULL;
+                        arg_boot_offset = 0;
+                        break;
+
+                case 'b':
+                        arg_boot = true;
+                        arg_boot_id = SD_ID128_NULL;
+                        arg_boot_offset = 0;
+
+                        if (optarg) {
+                                r = parse_id_descriptor(optarg, &arg_boot_id, &arg_boot_offset);
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to parse boot descriptor '%s'", optarg);
+
+                                arg_boot = r;
+
+                        } else if (optind < argc) {
+                                /* Hmm, no argument? Maybe the next word on the command line is supposed to be the
+                                 * argument? Let's see if there is one and is parsable as a boot descriptor... */
+                                r = parse_id_descriptor(argv[optind], &arg_boot_id, &arg_boot_offset);
+                                if (r >= 0) {
+                                        arg_boot = r;
+                                        optind++;
+                                }
+                        }
+                        break;
+
+                case 'u':
+                        r = strv_extend(&arg_system_units, optarg);
                         if (r < 0)
-                                return log_error_errno(r, "Failed to parse vacuum files: %s", optarg);
-
-                        arg_action = arg_action == ACTION_ROTATE ? ACTION_ROTATE_AND_VACUUM : ACTION_VACUUM;
-                        break;
-
-                case ARG_VACUUM_TIME:
-                        r = parse_sec(optarg, &arg_vacuum_time);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse vacuum time: %s", optarg);
-
-                        arg_action = arg_action == ACTION_ROTATE ? ACTION_ROTATE_AND_VACUUM : ACTION_VACUUM;
-                        break;
-
-#if HAVE_GCRYPT
-                case ARG_FORCE:
-                        arg_force = true;
-                        break;
-
-                case ARG_SETUP_KEYS:
-                        arg_action = ACTION_SETUP_KEYS;
-                        break;
-
-                case ARG_VERIFY_KEY:
-                        erase_and_free(arg_verify_key);
-                        arg_verify_key = strdup(optarg);
-                        if (!arg_verify_key)
                                 return log_oom();
-
-                        /* Use memset not explicit_bzero() or similar so this doesn't look confusing
-                         * in ps or htop output. */
-                        memset(optarg, 'x', strlen(optarg));
-
-                        arg_action = ACTION_VERIFY;
-                        arg_merge = false;
                         break;
 
-                case ARG_INTERVAL:
-                        r = parse_sec(optarg, &arg_interval);
-                        if (r < 0 || arg_interval <= 0)
-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Failed to parse sealing key change interval: %s", optarg);
+                case ARG_USER_UNIT:
+                        r = strv_extend(&arg_user_units, optarg);
+                        if (r < 0)
+                                return log_oom();
                         break;
-#else
-                case ARG_SETUP_KEYS:
-                case ARG_VERIFY_KEY:
-                case ARG_INTERVAL:
-                case ARG_FORCE:
-                        return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
-                                               "Compiled without forward-secure sealing support.");
-#endif
+
+                case ARG_INVOCATION:
+                        r = parse_id_descriptor(optarg, &arg_invocation_id, &arg_invocation_offset);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse invocation descriptor: %s", optarg);
+                        arg_invocation = r;
+                        break;
+
+                case 'I':
+                        /* Equivalent to --invocation=0 */
+                        arg_invocation = true;
+                        arg_invocation_id = SD_ID128_NULL;
+                        arg_invocation_offset = 0;
+                        break;
+
+                case 't':
+                        r = strv_extend(&arg_syslog_identifier, optarg);
+                        if (r < 0)
+                                return log_oom();
+                        break;
+
+                case 'T':
+                        r = strv_extend(&arg_exclude_identifier, optarg);
+                        if (r < 0)
+                                return log_oom();
+                        break;
 
                 case 'p': {
                         const char *dots;
@@ -907,58 +794,160 @@ static int parse_argv(int argc, char *argv[]) {
 
                         break;
 
-                case 'S':
-                        r = parse_timestamp(optarg, &arg_since);
+                case 'k':
+                        arg_dmesg = true;
+                        break;
+
+                case 'o':
+                        if (streq(optarg, "help"))
+                                return DUMP_STRING_TABLE(output_mode, OutputMode, _OUTPUT_MODE_MAX);
+
+                        arg_output = output_mode_from_string(optarg);
+                        if (arg_output < 0)
+                                return log_error_errno(arg_output, "Unknown output format '%s'.", optarg);
+
+                        if (IN_SET(arg_output, OUTPUT_EXPORT, OUTPUT_JSON, OUTPUT_JSON_PRETTY, OUTPUT_JSON_SSE, OUTPUT_JSON_SEQ, OUTPUT_CAT))
+                                arg_quiet = true;
+
+                        if (OUTPUT_MODE_IS_JSON(arg_output))
+                                arg_json_format_flags = output_mode_to_json_format_flags(arg_output) | SD_JSON_FORMAT_COLOR_AUTO;
+                        else
+                                arg_json_format_flags = SD_JSON_FORMAT_OFF;
+
+                        break;
+
+                case ARG_OUTPUT_FIELDS: {
+                        _cleanup_strv_free_ char **v = NULL;
+
+                        v = strv_split(optarg, ",");
+                        if (!v)
+                                return log_oom();
+
+                        r = set_put_strdupv(&arg_output_fields, v);
                         if (r < 0)
+                                return log_oom();
+
+                        break;
+                }
+
+                case 'n':
+                        r = parse_lines(optarg ?: argv[optind], !optarg);
+                        if (r < 0)
+                                return r;
+                        if (r > 0 && !optarg)
+                                optind++;
+
+                        break;
+
+                case 'r':
+                        arg_reverse = true;
+                        break;
+
+                case ARG_SHOW_CURSOR:
+                        arg_show_cursor = true;
+                        break;
+
+                case ARG_UTC:
+                        arg_utc = true;
+                        break;
+
+                case 'x':
+                        arg_catalog = true;
+                        break;
+
+                case 'W':
+                        arg_no_hostname = true;
+                        break;
+
+                case 'l':
+                        arg_full = true;
+                        break;
+
+                case ARG_NO_FULL:
+                        arg_full = false;
+                        break;
+
+                case 'a':
+                        arg_all = true;
+                        break;
+
+                case 'f':
+                        arg_follow = true;
+                        break;
+
+                case ARG_NO_TAIL:
+                        arg_no_tail = true;
+                        break;
+
+                case ARG_TRUNCATE_NEWLINE:
+                        arg_truncate_newline = true;
+                        break;
+
+                case 'q':
+                        arg_quiet = true;
+                        break;
+
+                case ARG_SYNCHRONIZE_ON_EXIT:
+                        r = parse_boolean_argument("--synchronize-on-exit", optarg, &arg_synchronize_on_exit);
+                        if (r < 0)
+                                return r;
+
+                        break;
+
+                case ARG_NO_PAGER:
+                        arg_pager_flags |= PAGER_DISABLE;
+                        break;
+
+                case 'e':
+                        arg_pager_flags |= PAGER_JUMP_TO_END;
+                        break;
+
+#if HAVE_GCRYPT
+                case ARG_INTERVAL:
+                        r = parse_sec(optarg, &arg_interval);
+                        if (r < 0 || arg_interval <= 0)
                                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Failed to parse timestamp: %s", optarg);
-                        arg_since_set = true;
+                                                       "Failed to parse sealing key change interval: %s", optarg);
                         break;
 
-                case 'U':
-                        r = parse_timestamp(optarg, &arg_until);
-                        if (r < 0)
-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Failed to parse timestamp: %s", optarg);
-                        arg_until_set = true;
-                        break;
-
-                case 't':
-                        r = strv_extend(&arg_syslog_identifier, optarg);
-                        if (r < 0)
+                case ARG_VERIFY_KEY:
+                        erase_and_free(arg_verify_key);
+                        arg_verify_key = strdup(optarg);
+                        if (!arg_verify_key)
                                 return log_oom();
+
+                        /* Use memset not explicit_bzero() or similar so this doesn't look confusing
+                         * in ps or htop output. */
+                        memset(optarg, 'x', strlen(optarg));
+
+                        arg_action = ACTION_VERIFY;
+                        arg_merge = false;
                         break;
 
-                case 'T':
-                        r = strv_extend(&arg_exclude_identifier, optarg);
-                        if (r < 0)
-                                return log_oom();
+                case ARG_FORCE:
+                        arg_force = true;
                         break;
 
-                case 'u':
-                        r = strv_extend(&arg_system_units, optarg);
-                        if (r < 0)
-                                return log_oom();
+                case ARG_SETUP_KEYS:
+                        arg_action = ACTION_SETUP_KEYS;
                         break;
+#else
+                case ARG_INTERVAL:
+                case ARG_VERIFY_KEY:
+                case ARG_FORCE:
+                case ARG_SETUP_KEYS:
+                        return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
+                                               "Compiled without forward-secure sealing support.");
+#endif
 
-                case ARG_USER_UNIT:
-                        r = strv_extend(&arg_user_units, optarg);
-                        if (r < 0)
-                                return log_oom();
-                        break;
+                case 'h':
+                        return help();
 
-                case ARG_INVOCATION:
-                        r = parse_id_descriptor(optarg, &arg_invocation_id, &arg_invocation_offset);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse invocation descriptor: %s", optarg);
-                        arg_invocation = r;
-                        break;
+                case ARG_VERSION:
+                        return version();
 
-                case 'I':
-                        /* Equivalent to --invocation=0 */
-                        arg_invocation = true;
-                        arg_invocation_id = SD_ID128_NULL;
-                        arg_invocation_offset = 0;
+                case 'N':
+                        arg_action = ACTION_LIST_FIELD_NAMES;
                         break;
 
                 case 'F':
@@ -968,40 +957,52 @@ static int parse_argv(int argc, char *argv[]) {
                                 return r;
                         break;
 
-                case 'N':
-                        arg_action = ACTION_LIST_FIELD_NAMES;
+                case ARG_LIST_BOOTS:
+                        arg_action = ACTION_LIST_BOOTS;
                         break;
 
-                case 'W':
-                        arg_no_hostname = true;
+                case ARG_LIST_INVOCATIONS:
+                        arg_action = ACTION_LIST_INVOCATIONS;
                         break;
 
-                case 'x':
-                        arg_catalog = true;
+                case ARG_LIST_NAMESPACES:
+                        arg_action = ACTION_LIST_NAMESPACES;
                         break;
 
-                case ARG_LIST_CATALOG:
-                        arg_action = ACTION_LIST_CATALOG;
+                case ARG_DISK_USAGE:
+                        arg_action = ACTION_DISK_USAGE;
                         break;
 
-                case ARG_DUMP_CATALOG:
-                        arg_action = ACTION_DUMP_CATALOG;
+                case ARG_VACUUM_SIZE:
+                        r = parse_size(optarg, 1024, &arg_vacuum_size);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse vacuum size: %s", optarg);
+
+                        arg_action = arg_action == ACTION_ROTATE ? ACTION_ROTATE_AND_VACUUM : ACTION_VACUUM;
                         break;
 
-                case ARG_UPDATE_CATALOG:
-                        arg_action = ACTION_UPDATE_CATALOG;
+                case ARG_VACUUM_FILES:
+                        r = safe_atou64(optarg, &arg_vacuum_n_files);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse vacuum files: %s", optarg);
+
+                        arg_action = arg_action == ACTION_ROTATE ? ACTION_ROTATE_AND_VACUUM : ACTION_VACUUM;
                         break;
 
-                case 'r':
-                        arg_reverse = true;
+                case ARG_VACUUM_TIME:
+                        r = parse_sec(optarg, &arg_vacuum_time);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse vacuum time: %s", optarg);
+
+                        arg_action = arg_action == ACTION_ROTATE ? ACTION_ROTATE_AND_VACUUM : ACTION_VACUUM;
                         break;
 
-                case ARG_UTC:
-                        arg_utc = true;
+                case ARG_VERIFY:
+                        arg_action = ACTION_VERIFY;
                         break;
 
-                case ARG_FLUSH:
-                        arg_action = ACTION_FLUSH;
+                case ARG_SYNC:
+                        arg_action = ACTION_SYNC;
                         break;
 
                 case ARG_SMART_RELINQUISH_VAR: {
@@ -1033,33 +1034,32 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_action = ACTION_RELINQUISH_VAR;
                         break;
 
+                case ARG_FLUSH:
+                        arg_action = ACTION_FLUSH;
+                        break;
+
                 case ARG_ROTATE:
                         arg_action = arg_action == ACTION_VACUUM ? ACTION_ROTATE_AND_VACUUM : ACTION_ROTATE;
                         break;
 
-                case ARG_SYNC:
-                        arg_action = ACTION_SYNC;
+                case ARG_HEADER:
+                        arg_action = ACTION_PRINT_HEADER;
                         break;
 
-                case ARG_OUTPUT_FIELDS: {
-                        _cleanup_strv_free_ char **v = NULL;
-
-                        v = strv_split(optarg, ",");
-                        if (!v)
-                                return log_oom();
-
-                        r = set_put_strdupv(&arg_output_fields, v);
-                        if (r < 0)
-                                return log_oom();
-
+                case ARG_LIST_CATALOG:
+                        arg_action = ACTION_LIST_CATALOG;
                         break;
-                }
 
-                case ARG_SYNCHRONIZE_ON_EXIT:
-                        r = parse_boolean_argument("--synchronize-on-exit", optarg, &arg_synchronize_on_exit);
-                        if (r < 0)
-                                return r;
+                case ARG_DUMP_CATALOG:
+                        arg_action = ACTION_DUMP_CATALOG;
+                        break;
 
+                case ARG_UPDATE_CATALOG:
+                        arg_action = ACTION_UPDATE_CATALOG;
+                        break;
+
+                case ARG_NEW_ID128:
+                        arg_action = ACTION_NEW_ID128;
                         break;
 
                 case '?':
