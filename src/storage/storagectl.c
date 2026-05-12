@@ -399,11 +399,12 @@ static int verb_providers(int argc, char *argv[], uintptr_t data, void *userdata
         return 0;
 }
 
-static int parse_argv(int argc, char *argv[], char ***args) {
+static int parse_argv(int argc, char *argv[], char ***remaining_args) {
         int r;
 
         assert(argc >= 0);
         assert(argv);
+        assert(remaining_args);
 
         OptionParser opts = { argc, argv };
         FOREACH_OPTION_OR_RETURN(c, &opts)
@@ -442,7 +443,7 @@ static int parse_argv(int argc, char *argv[], char ***args) {
                         break;
                 }
 
-        *args = option_parser_get_args(&opts);
+        *remaining_args = option_parser_get_args(&opts);
         return 1;
 }
 
