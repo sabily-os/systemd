@@ -118,29 +118,6 @@ static int unit_conditions_build_json(sd_json_variant **ret, const char *name, v
         return 0;
 }
 
-static int exec_command_list_build_json(sd_json_variant **ret, const char *name, void *userdata) {
-        _cleanup_(sd_json_variant_unrefp) sd_json_variant *v = NULL;
-        ExecCommand *list = userdata;
-        int r;
-
-        assert(ret);
-
-        LIST_FOREACH(command, c, list) {
-                _cleanup_(sd_json_variant_unrefp) sd_json_variant *entry = NULL;
-
-                r = exec_command_build_json(&entry, /* name= */ NULL, c);
-                if (r < 0)
-                        return r;
-
-                r = sd_json_variant_append_array(&v, entry);
-                if (r < 0)
-                        return r;
-        }
-
-        *ret = TAKE_PTR(v);
-        return 0;
-}
-
 /* TODO: This covers only a small subset of a service object's properties. Extend to make more available to
  * consumers like Unit.StartTransient */
 static int service_context_build_json(sd_json_variant **ret, const char *name, void *userdata) {
