@@ -136,7 +136,7 @@ SPDX-License-Identifier: LGPL-2.1-or-later
 - /etc/machine-info should have a concept of a "role" that we can put a machine
   into, which can be consumed by sysupdate and similar. A role should be
   something we can set once (i.e. the initial setting should be protected by
-  polkit and be somewhat losely access control, and later settings should use a
+  polkit and be somewhat loosely access control, and later settings should use a
   different/tougher polkit authorization, so that people can implement a
   no-way-back mechanism)
 
