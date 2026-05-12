@@ -308,126 +308,6 @@ static int verb_list_sessions(int argc, char *argv[], uintptr_t _data, void *use
         return list_table_print(table, "sessions");
 }
 
-static int verb_list_users(int argc, char *argv[], uintptr_t _data, void *userdata) {
-
-        static const struct bus_properties_map property_map[] = {
-                { "Linger", "b", NULL, offsetof(UserStatusInfo, linger) },
-                { "State",  "s", NULL, offsetof(UserStatusInfo, state)  },
-                {},
-        };
-
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        _cleanup_(table_unrefp) Table *table = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        assert(argv);
-
-        r = bus_call_method(bus, bus_login_mgr, "ListUsers", &error, &reply, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to list users: %s", bus_error_message(&error, r));
-
-        r = sd_bus_message_enter_container(reply, 'a', "(uso)");
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        table = table_new("uid", "user", "linger", "state");
-        if (!table)
-                return log_oom();
-
-        (void) table_set_align_percent(table, TABLE_HEADER_CELL(0), 100);
-        table_set_ersatz_string(table, TABLE_ERSATZ_DASH);
-
-        for (;;) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error_property = SD_BUS_ERROR_NULL;
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply_property = NULL;
-                _cleanup_(user_status_info_done) UserStatusInfo info = {};
-                const char *user, *object;
-                uint32_t uid;
-
-                r = sd_bus_message_read(reply, "(uso)", &uid, &user, &object);
-                if (r < 0)
-                        return bus_log_parse_error(r);
-                if (r == 0)
-                        break;
-
-                r = bus_map_all_properties(bus,
-                                           "org.freedesktop.login1",
-                                           object,
-                                           property_map,
-                                           BUS_MAP_BOOLEAN_AS_BOOL,
-                                           &error_property,
-                                           &reply_property,
-                                           &info);
-                if (r < 0) {
-                        log_full_errno(sd_bus_error_has_name(&error_property, SD_BUS_ERROR_UNKNOWN_OBJECT) ? LOG_DEBUG : LOG_WARNING,
-                                       r,
-                                       "Failed to get properties of user %s, ignoring: %s",
-                                       user, bus_error_message(&error_property, r));
-                        continue;
-                }
-
-                r = table_add_many(table,
-                                   TABLE_UID, (uid_t) uid,
-                                   TABLE_STRING, user,
-                                   TABLE_BOOLEAN, info.linger,
-                                   TABLE_STRING, info.state);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = sd_bus_message_exit_container(reply);
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        return list_table_print(table, "users");
-}
-
-static int verb_list_seats(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        _cleanup_(table_unrefp) Table *table = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        assert(argv);
-
-        r = bus_call_method(bus, bus_login_mgr, "ListSeats", &error, &reply, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to list seats: %s", bus_error_message(&error, r));
-
-        r = sd_bus_message_enter_container(reply, 'a', "(so)");
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        table = table_new("seat");
-        if (!table)
-                return log_oom();
-
-        table_set_ersatz_string(table, TABLE_ERSATZ_DASH);
-
-        for (;;) {
-                const char *seat;
-
-                r = sd_bus_message_read(reply, "(so)", &seat, NULL);
-                if (r < 0)
-                        return bus_log_parse_error(r);
-                if (r == 0)
-                        break;
-
-                r = table_add_cell(table, NULL, TABLE_STRING, seat);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = sd_bus_message_exit_container(reply);
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        return list_table_print(table, "seats");
-}
-
 static int show_unit_cgroup(
                 sd_bus *bus,
                 const char *unit,
@@ -1084,6 +964,172 @@ static int verb_show_session(int argc, char *argv[], uintptr_t _data, void *user
         return 0;
 }
 
+static int verb_activate(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        assert(argv);
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        if (argc < 2) {
+                r = sd_bus_call_method(
+                                bus,
+                                "org.freedesktop.login1",
+                                "/org/freedesktop/login1/session/auto",
+                                "org.freedesktop.login1.Session",
+                                streq(argv[0], "lock-session")      ? "Lock" :
+                                streq(argv[0], "unlock-session")    ? "Unlock" :
+                                streq(argv[0], "terminate-session") ? "Terminate" :
+                                                                      "Activate",
+                                &error, NULL, NULL);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to issue method call: %s", bus_error_message(&error, r));
+
+                return 0;
+        }
+
+        for (int i = 1; i < argc; i++) {
+                r = bus_call_method(
+                                bus,
+                                bus_login_mgr,
+                                streq(argv[0], "lock-session")      ? "LockSession" :
+                                streq(argv[0], "unlock-session")    ? "UnlockSession" :
+                                streq(argv[0], "terminate-session") ? "TerminateSession" :
+                                                                      "ActivateSession",
+                                &error, NULL,
+                                "s", argv[i]);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to issue method call: %s", bus_error_message(&error, r));
+        }
+
+        return 0;
+}
+
+static int verb_lock_sessions(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        assert(argv);
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        r = bus_call_method(
+                        bus,
+                        bus_login_mgr,
+                        streq(argv[0], "lock-sessions") ? "LockSessions" : "UnlockSessions",
+                        &error, NULL,
+                        NULL);
+        if (r < 0)
+                return log_error_errno(r, "Could not lock sessions: %s", bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int verb_kill_session(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        assert(argv);
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        if (!arg_kill_whom)
+                arg_kill_whom = "all";
+
+        for (int i = 1; i < argc; i++) {
+                r = bus_call_method(
+                                bus,
+                                bus_login_mgr,
+                                "KillSession",
+                                &error, NULL,
+                                "ssi", argv[i], arg_kill_whom, arg_signal);
+                if (r < 0)
+                        return log_error_errno(r, "Could not kill session: %s", bus_error_message(&error, r));
+        }
+
+        return 0;
+}
+
+static int verb_list_users(int argc, char *argv[], uintptr_t _data, void *userdata) {
+
+        static const struct bus_properties_map property_map[] = {
+                { "Linger", "b", NULL, offsetof(UserStatusInfo, linger) },
+                { "State",  "s", NULL, offsetof(UserStatusInfo, state)  },
+                {},
+        };
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        _cleanup_(table_unrefp) Table *table = NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        assert(argv);
+
+        r = bus_call_method(bus, bus_login_mgr, "ListUsers", &error, &reply, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to list users: %s", bus_error_message(&error, r));
+
+        r = sd_bus_message_enter_container(reply, 'a', "(uso)");
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        table = table_new("uid", "user", "linger", "state");
+        if (!table)
+                return log_oom();
+
+        (void) table_set_align_percent(table, TABLE_HEADER_CELL(0), 100);
+        table_set_ersatz_string(table, TABLE_ERSATZ_DASH);
+
+        for (;;) {
+                _cleanup_(sd_bus_error_free) sd_bus_error error_property = SD_BUS_ERROR_NULL;
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply_property = NULL;
+                _cleanup_(user_status_info_done) UserStatusInfo info = {};
+                const char *user, *object;
+                uint32_t uid;
+
+                r = sd_bus_message_read(reply, "(uso)", &uid, &user, &object);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+                if (r == 0)
+                        break;
+
+                r = bus_map_all_properties(bus,
+                                           "org.freedesktop.login1",
+                                           object,
+                                           property_map,
+                                           BUS_MAP_BOOLEAN_AS_BOOL,
+                                           &error_property,
+                                           &reply_property,
+                                           &info);
+                if (r < 0) {
+                        log_full_errno(sd_bus_error_has_name(&error_property, SD_BUS_ERROR_UNKNOWN_OBJECT) ? LOG_DEBUG : LOG_WARNING,
+                                       r,
+                                       "Failed to get properties of user %s, ignoring: %s",
+                                       user, bus_error_message(&error_property, r));
+                        continue;
+                }
+
+                r = table_add_many(table,
+                                   TABLE_UID, (uid_t) uid,
+                                   TABLE_STRING, user,
+                                   TABLE_BOOLEAN, info.linger,
+                                   TABLE_STRING, info.state);
+                if (r < 0)
+                        return table_log_add_error(r);
+        }
+
+        r = sd_bus_message_exit_container(reply);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        return list_table_print(table, "users");
+}
+
 static int verb_show_user(int argc, char *argv[], uintptr_t _data, void *userdata) {
         sd_bus *bus = ASSERT_PTR(userdata);
         bool properties;
@@ -1130,121 +1176,6 @@ static int verb_show_user(int argc, char *argv[], uintptr_t _data, void *userdat
                         r = print_user_status_info(bus, path);
                 if (r < 0)
                         return r;
-        }
-
-        return 0;
-}
-
-static int verb_show_seat(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        sd_bus *bus = ASSERT_PTR(userdata);
-        bool properties;
-        int r;
-
-        assert(argv);
-
-        properties = !strstr(argv[0], "status");
-
-        pager_open(arg_pager_flags);
-
-        if (argc <= 1) {
-                _cleanup_free_ char *path = NULL;
-
-                /* If no argument is specified inspect the manager itself */
-                if (properties)
-                        return show_properties(bus, "/org/freedesktop/login1");
-
-                r = get_bus_path_by_id(bus, "seat", "GetSeat", "auto", &path);
-                if (r < 0)
-                        return r;
-
-                return print_seat_status_info(bus, path);
-        }
-
-        for (int i = 1, first = true; i < argc; i++, first = false) {
-                _cleanup_free_ char *path = NULL;
-
-                r = get_bus_path_by_id(bus, "seat", "GetSeat", argv[i], &path);
-                if (r < 0)
-                        return r;
-
-                if (!first)
-                        putchar('\n');
-
-                if (properties)
-                        r = show_properties(bus, path);
-                else
-                        r = print_seat_status_info(bus, path);
-                if (r < 0)
-                        return r;
-        }
-
-        return 0;
-}
-
-static int verb_activate(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        assert(argv);
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        if (argc < 2) {
-                r = sd_bus_call_method(
-                                bus,
-                                "org.freedesktop.login1",
-                                "/org/freedesktop/login1/session/auto",
-                                "org.freedesktop.login1.Session",
-                                streq(argv[0], "lock-session")      ? "Lock" :
-                                streq(argv[0], "unlock-session")    ? "Unlock" :
-                                streq(argv[0], "terminate-session") ? "Terminate" :
-                                                                      "Activate",
-                                &error, NULL, NULL);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to issue method call: %s", bus_error_message(&error, r));
-
-                return 0;
-        }
-
-        for (int i = 1; i < argc; i++) {
-                r = bus_call_method(
-                                bus,
-                                bus_login_mgr,
-                                streq(argv[0], "lock-session")      ? "LockSession" :
-                                streq(argv[0], "unlock-session")    ? "UnlockSession" :
-                                streq(argv[0], "terminate-session") ? "TerminateSession" :
-                                                                      "ActivateSession",
-                                &error, NULL,
-                                "s", argv[i]);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to issue method call: %s", bus_error_message(&error, r));
-        }
-
-        return 0;
-}
-
-static int verb_kill_session(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        assert(argv);
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        if (!arg_kill_whom)
-                arg_kill_whom = "all";
-
-        for (int i = 1; i < argc; i++) {
-                r = bus_call_method(
-                                bus,
-                                bus_login_mgr,
-                                "KillSession",
-                                &error, NULL,
-                                "ssi", argv[i], arg_kill_whom, arg_signal);
-                if (r < 0)
-                        return log_error_errno(r, "Could not kill session: %s", bus_error_message(&error, r));
         }
 
         return 0;
@@ -1366,6 +1297,96 @@ static int verb_kill_user(int argc, char *argv[], uintptr_t _data, void *userdat
         return 0;
 }
 
+static int verb_list_seats(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        _cleanup_(table_unrefp) Table *table = NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        assert(argv);
+
+        r = bus_call_method(bus, bus_login_mgr, "ListSeats", &error, &reply, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to list seats: %s", bus_error_message(&error, r));
+
+        r = sd_bus_message_enter_container(reply, 'a', "(so)");
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        table = table_new("seat");
+        if (!table)
+                return log_oom();
+
+        table_set_ersatz_string(table, TABLE_ERSATZ_DASH);
+
+        for (;;) {
+                const char *seat;
+
+                r = sd_bus_message_read(reply, "(so)", &seat, NULL);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+                if (r == 0)
+                        break;
+
+                r = table_add_cell(table, NULL, TABLE_STRING, seat);
+                if (r < 0)
+                        return table_log_add_error(r);
+        }
+
+        r = sd_bus_message_exit_container(reply);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        return list_table_print(table, "seats");
+}
+
+static int verb_show_seat(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        sd_bus *bus = ASSERT_PTR(userdata);
+        bool properties;
+        int r;
+
+        assert(argv);
+
+        properties = !strstr(argv[0], "status");
+
+        pager_open(arg_pager_flags);
+
+        if (argc <= 1) {
+                _cleanup_free_ char *path = NULL;
+
+                /* If no argument is specified inspect the manager itself */
+                if (properties)
+                        return show_properties(bus, "/org/freedesktop/login1");
+
+                r = get_bus_path_by_id(bus, "seat", "GetSeat", "auto", &path);
+                if (r < 0)
+                        return r;
+
+                return print_seat_status_info(bus, path);
+        }
+
+        for (int i = 1, first = true; i < argc; i++, first = false) {
+                _cleanup_free_ char *path = NULL;
+
+                r = get_bus_path_by_id(bus, "seat", "GetSeat", argv[i], &path);
+                if (r < 0)
+                        return r;
+
+                if (!first)
+                        putchar('\n');
+
+                if (properties)
+                        r = show_properties(bus, path);
+                else
+                        r = print_seat_status_info(bus, path);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
+}
+
 static int verb_attach(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         sd_bus *bus = ASSERT_PTR(userdata);
@@ -1402,27 +1423,6 @@ static int verb_flush_devices(int argc, char *argv[], uintptr_t _data, void *use
         r = bus_call_method(bus, bus_login_mgr, "FlushDevices", &error, NULL, "b", true);
         if (r < 0)
                 return log_error_errno(r, "Could not flush devices: %s", bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int verb_lock_sessions(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        assert(argv);
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        r = bus_call_method(
-                        bus,
-                        bus_login_mgr,
-                        streq(argv[0], "lock-sessions") ? "LockSessions" : "UnlockSessions",
-                        &error, NULL,
-                        NULL);
-        if (r < 0)
-                return log_error_errno(r, "Could not lock sessions: %s", bus_error_message(&error, r));
 
         return 0;
 }
@@ -1487,9 +1487,6 @@ static int help(void) {
                "\n%3$sOptions:%4$s\n"
                "  -h --help                Show this help\n"
                "     --version             Show package version\n"
-               "     --no-pager            Do not pipe output into a pager\n"
-               "     --no-legend           Do not show the headers and footers\n"
-               "     --no-ask-password     Don't prompt for password\n"
                "  -H --host=[USER@]HOST    Operate on remote host\n"
                "  -M --machine=CONTAINER   Operate on local container\n"
                "  -p --property=NAME       Show only properties by this name\n"
@@ -1508,6 +1505,9 @@ static int help(void) {
                "                             short-monotonic, short-unix, short-delta,\n"
                "                             json, json-pretty, json-sse, json-seq, cat,\n"
                "                             verbose, export, with-unit)\n"
+               "     --no-pager            Do not pipe output into a pager\n"
+               "     --no-legend           Do not show the headers and footers\n"
+               "     --no-ask-password     Don't prompt for password\n"
                "\nSee the %2$s for details.\n",
                program_invocation_short_name,
                link,
@@ -1569,6 +1569,17 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_VERSION:
                         return version();
 
+                case 'H':
+                        arg_transport = BUS_TRANSPORT_REMOTE;
+                        arg_host = optarg;
+                        break;
+
+                case 'M':
+                        r = parse_machine_argument(optarg, &arg_host, &arg_transport);
+                        if (r < 0)
+                                return r;
+                        break;
+
                 case 'P':
                         SET_FLAG(arg_print_flags, BUS_PRINT_PROPERTY_ONLY_VALUE, true);
                         _fallthrough_;
@@ -1628,18 +1639,6 @@ static int parse_argv(int argc, char *argv[]) {
 
                         break;
 
-                case ARG_NO_PAGER:
-                        arg_pager_flags |= PAGER_DISABLE;
-                        break;
-
-                case ARG_NO_LEGEND:
-                        arg_legend = false;
-                        break;
-
-                case ARG_NO_ASK_PASSWORD:
-                        arg_ask_password = false;
-                        break;
-
                 case ARG_KILL_WHOM:
                         arg_kill_whom = optarg;
                         break;
@@ -1650,15 +1649,16 @@ static int parse_argv(int argc, char *argv[]) {
                                 return r;
                         break;
 
-                case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
+                case ARG_NO_PAGER:
+                        arg_pager_flags |= PAGER_DISABLE;
                         break;
 
-                case 'M':
-                        r = parse_machine_argument(optarg, &arg_host, &arg_transport);
-                        if (r < 0)
-                                return r;
+                case ARG_NO_LEGEND:
+                        arg_legend = false;
+                        break;
+
+                case ARG_NO_ASK_PASSWORD:
+                        arg_ask_password = false;
                         break;
 
                 case '?':
