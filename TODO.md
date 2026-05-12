@@ -128,6 +128,23 @@ SPDX-License-Identifier: LGPL-2.1-or-later
 
 ## Features
 
+- pcrextend: we probably should measure /etc/machine-info during boot somehow
+
+- pcrextend: we should measure something when we enter developer mode, by some
+  definition of developer mode.
+
+- /etc/machine-info should have a concept of a "role" that we can put a machine
+  into, which can be consumed by sysupdate and similar. A role should be
+  something we can set once (i.e. the initial setting should be protected by
+  polkit and be somewhat losely access control, and later settings should use a
+  different/tougher polkit authorization, so that people can implement a
+  no-way-back mechanism)
+
+- firstboot: optionally accept credentials at firstboot without authentication
+
+- firstboot/sysinstall: add simple interface for prompting users to enable
+  "features" exposed by of sysupdate.
+
 - bootctl link + sysupdate integration
   - make sysupdate call out to a special varlink dir on completion
   - bind bootctl link socket in there, which when invoked goes to new dir in
@@ -135,8 +152,8 @@ SPDX-License-Identifier: LGPL-2.1-or-later
     .v/) and then does "bootctl link" on them.
 
 - a tool that can prep credentials, put them in the ESP, for provisioning
-  systems for SBC. Should be doing what sysinstall does with the credentials,
-  and maybe even *be* sysinstall.
+  systems for SBC or UEFI/HTTP boot. Should be doing what sysinstall does with
+  the credentials, and maybe even *be* sysinstall.
 
 - make sure we always pass O_NOFOLLOW on O_CREAT
 
