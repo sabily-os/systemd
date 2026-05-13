@@ -128,6 +128,33 @@ SPDX-License-Identifier: LGPL-2.1-or-later
 
 ## Features
 
+- sysupdate: offer reading transfer files/components/features optionally from
+  some JSON fragment rather than transfer files, so that we can update it
+  independently from any DDI, and it needs no activation cycle. Why? so that
+  making additional transfers/components/features available can be done without
+  reloading confext/sysext, and out-band with other configuratoin changes.
+
+- sysupdate: go through all components, and update them all, one by one.
+
+- sysupdate: add concept for enabling/disabling specific components explicitly,
+  just like features.
+
+- machine-info: add a TAGS concept that can be used to categorize a machine
+
+- udev: add a MACHINE_TAGS field, that augments /etc/machine-info configured
+  tags.
+
+- hostnamectl: management, collation of all tags. four sources: udev,
+  /etc/machine-info, credentials, and /etc/machine-tags.d/*.conf
+
+- sysupdate: add conditions to transfer files, copying what we have for unit
+  files and .network files
+
+- pid1,sysupdate,network: add support for a new "tags" condition, that checks
+  all of the above.
+
+- sysupdate: write out database of all files created, and support gc of it
+
 - pcrextend: we probably should measure /etc/machine-info during boot somehow
 
 - pcrextend: we should measure something when we enter developer mode, by some
