@@ -1178,15 +1178,21 @@ static int parse_argv(int argc, char *argv[]) {
                         log_set_max_level(LOG_DEBUG);
                         break;
 
-                /* Just to eat away the sysvinit kernel cmdline args that we'll parse in
+                /* Eat the sysvinit kernel cmdline args that we'll parse in
                  * parse_proc_cmdline_item() or ignore. */
                 OPTION_SHORT('b', NULL,  /* help= */ NULL): {}
                 OPTION_SHORT('s', NULL,  /* help= */ NULL): {}
                 OPTION_SHORT('z', "ARG", /* help= */ NULL):
+                        if (getpid_cached() != 1)
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Switch -%c is only supported when running as PID 1.", opts.opt->short_code);
+                        /* In PID1, do nothing and continue with option parsing. */
+                        break;
                 OPTION_ERROR:
-                        if (getpid_cached() == 1)
-                                return 0;
-                        return -EINVAL;
+                        if (getpid_cached() != 1)
+                                return -EINVAL;
+                        /* In PID1, silently terminate option parsing. */
+                        return 0;
                 }
 
         if (option_parser_get_n_args(&opts) > 0 && getpid_cached() != 1)
