@@ -990,17 +990,103 @@ static int parse_argv(int argc, char *argv[]) {
 
                 switch (c) {
 
-                case ARG_LOG_LEVEL:
-                        r = log_set_max_level_from_string(optarg);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse log level \"%s\": %m", optarg);
+                case 'h':
+                        arg_action = ACTION_HELP;
+                        break;
 
+                case ARG_VERSION:
+                        arg_action = ACTION_VERSION;
+                        break;
+
+                case ARG_TEST:
+                        arg_action = ACTION_TEST;
+                        break;
+
+                case ARG_SYSTEM:
+                        arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
+                        break;
+
+                case ARG_USER:
+                        arg_runtime_scope = RUNTIME_SCOPE_USER;
+                        user_arg_seen = true;
+                        break;
+
+                case ARG_DUMP_CONFIGURATION_ITEMS:
+                        arg_action = ACTION_DUMP_CONFIGURATION_ITEMS;
+                        break;
+
+                case ARG_DUMP_BUS_PROPERTIES:
+                        arg_action = ACTION_DUMP_BUS_PROPERTIES;
+                        break;
+
+                case ARG_BUS_INTROSPECT:
+                        arg_bus_introspect = optarg;
+                        arg_action = ACTION_BUS_INTROSPECT;
+                        break;
+
+                case ARG_UNIT:
+                        r = free_and_strdup(&arg_default_unit, optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to set default unit \"%s\": %m", optarg);
+
+                        break;
+
+                case ARG_DUMP_CORE:
+                        r = parse_boolean_argument("--dump-core", optarg, &arg_dump_core);
+                        if (r < 0)
+                                return r;
+                        break;
+
+                case ARG_CRASH_CHVT:
+                        r = parse_crash_chvt(optarg, &arg_crash_chvt);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse crash virtual terminal index: \"%s\": %m",
+                                                       optarg);
+                        break;
+
+                case ARG_CRASH_ACTION:
+                        r = crash_action_from_string(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse crash action \"%s\": %m", optarg);
+                        arg_crash_action = r;
+                        break;
+
+                case ARG_CRASH_SHELL:
+                        r = parse_boolean_argument("--crash-shell", optarg, &arg_crash_shell);
+                        if (r < 0)
+                                return r;
+                        break;
+
+                case ARG_CONFIRM_SPAWN:
+                        arg_confirm_spawn = mfree(arg_confirm_spawn);
+
+                        r = parse_confirm_spawn(optarg, &arg_confirm_spawn);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse confirm spawn option: \"%s\": %m",
+                                                       optarg);
+                        break;
+
+                case ARG_SHOW_STATUS:
+                        if (optarg) {
+                                r = parse_show_status(optarg, &arg_show_status);
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to parse show status boolean: \"%s\": %m",
+                                                               optarg);
+                        } else
+                                arg_show_status = SHOW_STATUS_YES;
                         break;
 
                 case ARG_LOG_TARGET:
                         r = log_set_target_from_string(optarg);
                         if (r < 0)
                                 return log_error_errno(r, "Failed to parse log target \"%s\": %m", optarg);
+
+                        break;
+
+                case ARG_LOG_LEVEL:
+                        r = log_set_max_level_from_string(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse log level \"%s\": %m", optarg);
 
                         break;
 
@@ -1055,65 +1141,11 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_defaults.std_error = r;
                         break;
 
-                case ARG_UNIT:
-                        r = free_and_strdup(&arg_default_unit, optarg);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to set default unit \"%s\": %m", optarg);
-
-                        break;
-
-                case ARG_SYSTEM:
-                        arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
-                        break;
-
-                case ARG_USER:
-                        arg_runtime_scope = RUNTIME_SCOPE_USER;
-                        user_arg_seen = true;
-                        break;
-
-                case ARG_TEST:
-                        arg_action = ACTION_TEST;
-                        break;
-
                 case ARG_NO_PAGER:
                         arg_pager_flags |= PAGER_DISABLE;
                         break;
 
-                case ARG_VERSION:
-                        arg_action = ACTION_VERSION;
-                        break;
-
-                case ARG_DUMP_CONFIGURATION_ITEMS:
-                        arg_action = ACTION_DUMP_CONFIGURATION_ITEMS;
-                        break;
-
-                case ARG_DUMP_BUS_PROPERTIES:
-                        arg_action = ACTION_DUMP_BUS_PROPERTIES;
-                        break;
-
-                case ARG_BUS_INTROSPECT:
-                        arg_bus_introspect = optarg;
-                        arg_action = ACTION_BUS_INTROSPECT;
-                        break;
-
-                case ARG_DUMP_CORE:
-                        r = parse_boolean_argument("--dump-core", optarg, &arg_dump_core);
-                        if (r < 0)
-                                return r;
-                        break;
-
-                case ARG_CRASH_CHVT:
-                        r = parse_crash_chvt(optarg, &arg_crash_chvt);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse crash virtual terminal index: \"%s\": %m",
-                                                       optarg);
-                        break;
-
-                case ARG_CRASH_SHELL:
-                        r = parse_boolean_argument("--crash-shell", optarg, &arg_crash_shell);
-                        if (r < 0)
-                                return r;
-                        break;
+                /* Options not shown in --help. */
 
                 case ARG_CRASH_REBOOT:
                         r = parse_boolean_argument("--crash-reboot", optarg, NULL);
@@ -1122,36 +1154,10 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_crash_action = r > 0 ? CRASH_REBOOT : CRASH_FREEZE;
                         break;
 
-                case ARG_CRASH_ACTION:
-                        r = crash_action_from_string(optarg);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse crash action \"%s\": %m", optarg);
-                        arg_crash_action = r;
-                        break;
-
-                case ARG_CONFIRM_SPAWN:
-                        arg_confirm_spawn = mfree(arg_confirm_spawn);
-
-                        r = parse_confirm_spawn(optarg, &arg_confirm_spawn);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse confirm spawn option: \"%s\": %m",
-                                                       optarg);
-                        break;
-
                 case ARG_SERVICE_WATCHDOGS:
                         r = parse_boolean_argument("--service-watchdogs=", optarg, &arg_service_watchdogs);
                         if (r < 0)
                                 return r;
-                        break;
-
-                case ARG_SHOW_STATUS:
-                        if (optarg) {
-                                r = parse_show_status(optarg, &arg_show_status);
-                                if (r < 0)
-                                        return log_error_errno(r, "Failed to parse show status boolean: \"%s\": %m",
-                                                               optarg);
-                        } else
-                                arg_show_status = SHOW_STATUS_YES;
                         break;
 
                 case ARG_DESERIALIZE: {
@@ -1182,10 +1188,6 @@ static int parse_argv(int argc, char *argv[]) {
                         r = id128_from_string_nonzero(optarg, &arg_machine_id);
                         if (r < 0)
                                 return log_error_errno(r, "MachineID '%s' is not valid: %m", optarg);
-                        break;
-
-                case 'h':
-                        arg_action = ACTION_HELP;
                         break;
 
                 case 'D':
