@@ -2788,7 +2788,7 @@ static int verb_unlock_home(int argc, char *argv[], uintptr_t _data, void *userd
 
                         r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
                         if (r < 0) {
-                                r = handle_generic_user_record_error(argv[1], secret, &error, r, false);
+                                r = handle_generic_user_record_error(*i, secret, &error, r, false);
                                 if (r < 0) {
                                         if (ret == 0)
                                                 ret = r;
