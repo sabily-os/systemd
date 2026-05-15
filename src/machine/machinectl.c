@@ -2520,6 +2520,24 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_VERSION:
                         return version();
 
+                case 'H':
+                        arg_transport = BUS_TRANSPORT_REMOTE;
+                        arg_host = optarg;
+                        break;
+
+                case 'M':
+                        arg_transport = BUS_TRANSPORT_MACHINE;
+                        arg_host = optarg;
+                        break;
+
+                case ARG_SYSTEM:
+                        arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
+                        break;
+
+                case ARG_USER:
+                        arg_runtime_scope = RUNTIME_SCOPE_USER;
+                        break;
+
                 case 'p':
                 case 'P':
                         r = strv_extend(&arg_property, optarg);
@@ -2546,10 +2564,46 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_full = true;
                         break;
 
+                case ARG_KILL_WHOM:
+                        arg_kill_whom = optarg;
+                        break;
+
+                case 's':
+                        r = parse_signal_argument(optarg, &arg_signal);
+                        if (r <= 0)
+                                return r;
+                        break;
+
+                case ARG_UID:
+                        arg_uid = optarg;
+                        break;
+
+                case 'E':
+                        r = strv_env_replace_strdup_passthrough(&arg_setenv, optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Cannot assign environment variable %s: %m", optarg);
+                        break;
+
+                case ARG_READ_ONLY:
+                        arg_read_only = true;
+                        break;
+
+                case ARG_MKDIR:
+                        arg_mkdir = true;
+                        break;
+
                 case 'n':
                         if (safe_atou(optarg, &arg_lines) < 0)
                                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                                        "Failed to parse lines '%s'", optarg);
+                        break;
+
+                case ARG_MAX_ADDRESSES:
+                        if (streq(optarg, "all"))
+                                arg_max_addresses = UINT_MAX;
+                        else if (safe_atou(optarg, &arg_max_addresses) < 0)
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "Invalid number of addresses: %s", optarg);
                         break;
 
                 case 'o':
@@ -2565,48 +2619,24 @@ static int parse_argv(int argc, char *argv[]) {
                                 arg_legend = false;
                         break;
 
-                case ARG_NO_PAGER:
-                        arg_pager_flags |= PAGER_DISABLE;
+                case ARG_FORCE:
+                        arg_force = true;
                         break;
 
-                case ARG_NO_LEGEND:
-                        arg_legend = false;
+                case ARG_NOW:
+                        arg_now = true;
                         break;
 
-                case ARG_KILL_WHOM:
-                        arg_kill_whom = optarg;
+                case ARG_RUNNER:
+                        r = machine_runner_from_string(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --runner= setting: %s", optarg);
+
+                        arg_runner = r;
                         break;
 
-                case 's':
-                        r = parse_signal_argument(optarg, &arg_signal);
-                        if (r <= 0)
-                                return r;
-                        break;
-
-                case ARG_NO_ASK_PASSWORD:
-                        arg_ask_password = false;
-                        break;
-
-                case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
-                        break;
-
-                case 'M':
-                        arg_transport = BUS_TRANSPORT_MACHINE;
-                        arg_host = optarg;
-                        break;
-
-                case ARG_READ_ONLY:
-                        arg_read_only = true;
-                        break;
-
-                case ARG_MKDIR:
-                        arg_mkdir = true;
-                        break;
-
-                case 'q':
-                        arg_quiet = true;
+                case 'V':
+                        arg_runner = RUNNER_VMSPAWN;
                         break;
 
                 case ARG_VERIFY:
@@ -2619,26 +2649,6 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_verify = r;
                         break;
 
-                case 'V':
-                        arg_runner = RUNNER_VMSPAWN;
-                        break;
-
-                case ARG_RUNNER:
-                        r = machine_runner_from_string(optarg);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse --runner= setting: %s", optarg);
-
-                        arg_runner = r;
-                        break;
-
-                case ARG_NOW:
-                        arg_now = true;
-                        break;
-
-                case ARG_FORCE:
-                        arg_force = true;
-                        break;
-
                 case ARG_FORMAT:
                         if (!STR_IN_SET(optarg, "uncompressed", "xz", "gzip", "bzip2", "zstd"))
                                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
@@ -2647,30 +2657,20 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_format = optarg;
                         break;
 
-                case ARG_UID:
-                        arg_uid = optarg;
+                case ARG_NO_PAGER:
+                        arg_pager_flags |= PAGER_DISABLE;
                         break;
 
-                case 'E':
-                        r = strv_env_replace_strdup_passthrough(&arg_setenv, optarg);
-                        if (r < 0)
-                                return log_error_errno(r, "Cannot assign environment variable %s: %m", optarg);
+                case ARG_NO_LEGEND:
+                        arg_legend = false;
                         break;
 
-                case ARG_MAX_ADDRESSES:
-                        if (streq(optarg, "all"))
-                                arg_max_addresses = UINT_MAX;
-                        else if (safe_atou(optarg, &arg_max_addresses) < 0)
-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                                       "Invalid number of addresses: %s", optarg);
+                case ARG_NO_ASK_PASSWORD:
+                        arg_ask_password = false;
                         break;
 
-                case ARG_USER:
-                        arg_runtime_scope = RUNTIME_SCOPE_USER;
-                        break;
-
-                case ARG_SYSTEM:
-                        arg_runtime_scope = RUNTIME_SCOPE_SYSTEM;
+                case 'q':
+                        arg_quiet = true;
                         break;
 
                 case '?':
