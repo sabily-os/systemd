@@ -3273,14 +3273,18 @@ int main(int argc, char *argv[]) {
 
                 /* The efivarfs is now mounted, let's lock down the system token. */
                 lock_down_efi_variables();
+
         } else {
                 /* Running as user instance */
                 arg_runtime_scope = RUNTIME_SCOPE_USER;
-                log_set_always_reopen_console(true);
-                log_set_target_and_open(LOG_TARGET_AUTO);
 
                 /* clear the kernel timestamp, because we are not PID 1 */
                 kernel_timestamp = DUAL_TIMESTAMP_NULL;
+
+                if (invoked_by_systemd()) {
+                        log_set_always_reopen_console(true);
+                        log_set_target_and_open(LOG_TARGET_AUTO);
+                }
 
                 r = mac_init();
                 if (r < 0) {
@@ -3293,9 +3297,11 @@ int main(int argc, char *argv[]) {
          * transitioning from the initrd to the main systemd or suchlike. */
         save_rlimits(&saved_rlimit_nofile, &saved_rlimit_memlock);
 
-        /* Reset all signal handlers. */
+        /* Reset all signal handlers to clean up after reexec. */
         (void) reset_all_signal_handlers();
-        (void) ignore_signals(SIGNALS_IGNORE);
+
+        if (getpid_cached() == 1 || invoked_by_systemd())
+                (void) ignore_signals(SIGNALS_IGNORE);
 
         (void) parse_configuration(&saved_rlimit_nofile, &saved_rlimit_memlock);
 
