@@ -361,66 +361,6 @@ static int verb_list_machines(int argc, char *argv[], uintptr_t _data, void *use
         return show_table(table, "machines");
 }
 
-static int verb_list_images(int argc, char *argv[], uintptr_t _data, void *userdata) {
-
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        _cleanup_(table_unrefp) Table *table = NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        pager_open(arg_pager_flags);
-
-        r = bus_call_method(bus, bus_machine_mgr, "ListImages", &error, &reply, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Could not get images: %s", bus_error_message(&error, r));
-
-        table = table_new("name", "type", "ro", "usage", "created", "modified");
-        if (!table)
-                return log_oom();
-
-        if (arg_full)
-                table_set_width(table, 0);
-
-        (void) table_set_align_percent(table, TABLE_HEADER_CELL(3), 100);
-
-        r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "(ssbttto)");
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        for (;;) {
-                uint64_t crtime, mtime, size;
-                const char *name, *type;
-                int ro_int;
-
-                r = sd_bus_message_read(reply, "(ssbttto)", &name, &type, &ro_int, &crtime, &mtime, &size, NULL);
-                if (r < 0)
-                        return bus_log_parse_error(r);
-                if (r == 0)
-                        break;
-
-                if (name[0] == '.' && !arg_all)
-                        continue;
-
-                r = table_add_many(table,
-                                   TABLE_STRING, name,
-                                   TABLE_STRING, type,
-                                   TABLE_BOOLEAN, ro_int,
-                                   TABLE_SET_COLOR, ro_int ? ansi_highlight_red() : NULL,
-                                   TABLE_SIZE, size,
-                                   TABLE_TIMESTAMP, crtime,
-                                   TABLE_TIMESTAMP, mtime);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = sd_bus_message_exit_container(reply);
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        return show_table(table, "images");
-}
-
 static int show_unit_cgroup(
                 sd_bus *bus,
                 const char *unit,
@@ -683,7 +623,6 @@ static int map_netif(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_
 }
 
 static int show_machine_info(const char *verb, sd_bus *bus, const char *path, bool *new_line) {
-
         static const struct bus_properties_map map[]  = {
                 { "Name",               "s",  NULL,          offsetof(MachineStatusInfo, name)                },
                 { "Class",              "s",  NULL,          offsetof(MachineStatusInfo, class)               },
@@ -792,711 +731,133 @@ static int verb_show_machine(int argc, char *argv[], uintptr_t _data, void *user
         return r;
 }
 
-static int print_image_hostname(sd_bus *bus, const char *name) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        const char *hn;
+static int make_service_name(const char *name, char **ret) {
         int r;
 
-        r = bus_call_method(bus, bus_machine_mgr, "GetImageHostname", NULL, &reply, "s", name);
-        if (r < 0)
-                return r;
+        assert(name);
+        assert(ret);
+        assert(arg_runner >= 0 && arg_runner < _RUNNER_MAX);
 
-        r = sd_bus_message_read(reply, "s", &hn);
-        if (r < 0)
-                return r;
+        if (!hostname_is_valid(name, 0))
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                       "Invalid machine name %s.", name);
 
-        if (!isempty(hn))
-                printf("\tHostname: %s\n", hn);
+        r = unit_name_build(machine_runner_unit_prefix_table[arg_runner], name, ".service", ret);
+        if (r < 0)
+                return log_error_errno(r, "Failed to build unit name: %m");
 
         return 0;
 }
 
-static int print_image_machine_id(sd_bus *bus, const char *name) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        sd_id128_t id;
-        int r;
-
-        r = bus_call_method(bus, bus_machine_mgr, "GetImageMachineID", NULL, &reply, "s", name);
-        if (r < 0)
-                return r;
-
-        r = bus_message_read_id128(reply, &id);
-        if (r < 0)
-                return r;
-
-        if (!sd_id128_is_null(id))
-                printf("      Machine ID: " SD_ID128_FORMAT_STR "\n", SD_ID128_FORMAT_VAL(id));
-
-        return 0;
-}
-
-static int print_image_machine_info(sd_bus *bus, const char *name) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        int r;
-
-        r = bus_call_method(bus, bus_machine_mgr, "GetImageMachineInfo", NULL, &reply, "s", name);
-        if (r < 0)
-                return r;
-
-        r = sd_bus_message_enter_container(reply, 'a', "{ss}");
-        if (r < 0)
-                return r;
-
-        for (;;) {
-                const char *p, *q;
-
-                r = sd_bus_message_read(reply, "{ss}", &p, &q);
-                if (r < 0)
-                        return r;
-                if (r == 0)
-                        break;
-
-                if (streq(p, "DEPLOYMENT"))
-                        printf("      Deployment: %s\n", q);
-        }
-
-        r = sd_bus_message_exit_container(reply);
-        if (r < 0)
-                return r;
-
-        return 0;
-}
-
-typedef struct ImageStatusInfo {
-        const char *name;
-        const char *path;
-        const char *type;
-        bool read_only;
-        usec_t crtime;
-        usec_t mtime;
-        uint64_t usage;
-        uint64_t limit;
-        uint64_t usage_exclusive;
-        uint64_t limit_exclusive;
-} ImageStatusInfo;
-
-static void print_image_status_info(sd_bus *bus, ImageStatusInfo *i) {
-        assert(bus);
-        assert(i);
-
-        if (i->name) {
-                fputs(i->name, stdout);
-                putchar('\n');
-        }
-
-        if (i->type)
-                printf("\t    Type: %s\n", i->type);
-
-        if (i->path)
-                printf("\t    Path: %s\n", i->path);
-
-        (void) print_image_hostname(bus, i->name);
-        (void) print_image_machine_id(bus, i->name);
-        (void) print_image_machine_info(bus, i->name);
-
-        print_os_release(bus, "GetImageOSRelease", i->name, "\t      OS: ");
-
-        printf("\t      RO: %s%s%s\n",
-               i->read_only ? ansi_highlight_red() : "",
-               i->read_only ? "read-only" : "writable",
-               i->read_only ? ansi_normal() : "");
-
-        if (timestamp_is_set(i->crtime))
-                printf("\t Created: %s; %s\n",
-                       FORMAT_TIMESTAMP(i->crtime), FORMAT_TIMESTAMP_RELATIVE(i->crtime));
-
-        if (timestamp_is_set(i->mtime))
-                printf("\tModified: %s; %s\n",
-                       FORMAT_TIMESTAMP(i->mtime), FORMAT_TIMESTAMP_RELATIVE(i->mtime));
-
-        if (i->usage != UINT64_MAX) {
-                if (i->usage_exclusive != i->usage && i->usage_exclusive != UINT64_MAX)
-                        printf("\t   Usage: %s (exclusive: %s)\n",
-                               FORMAT_BYTES(i->usage), FORMAT_BYTES(i->usage_exclusive));
-                else
-                        printf("\t   Usage: %s\n", FORMAT_BYTES(i->usage));
-        }
-
-        if (i->limit != UINT64_MAX) {
-                if (i->limit_exclusive != i->limit && i->limit_exclusive != UINT64_MAX)
-                        printf("\t   Limit: %s (exclusive: %s)\n",
-                               FORMAT_BYTES(i->limit), FORMAT_BYTES(i->limit_exclusive));
-                else
-                        printf("\t   Limit: %s\n", FORMAT_BYTES(i->limit));
-        }
-}
-
-static int show_image_info(sd_bus *bus, const char *path, bool *new_line) {
-
-        static const struct bus_properties_map map[]  = {
-                { "Name",                  "s",  NULL, offsetof(ImageStatusInfo, name)            },
-                { "Path",                  "s",  NULL, offsetof(ImageStatusInfo, path)            },
-                { "Type",                  "s",  NULL, offsetof(ImageStatusInfo, type)            },
-                { "ReadOnly",              "b",  NULL, offsetof(ImageStatusInfo, read_only)       },
-                { "CreationTimestamp",     "t",  NULL, offsetof(ImageStatusInfo, crtime)          },
-                { "ModificationTimestamp", "t",  NULL, offsetof(ImageStatusInfo, mtime)           },
-                { "Usage",                 "t",  NULL, offsetof(ImageStatusInfo, usage)           },
-                { "Limit",                 "t",  NULL, offsetof(ImageStatusInfo, limit)           },
-                { "UsageExclusive",        "t",  NULL, offsetof(ImageStatusInfo, usage_exclusive) },
-                { "LimitExclusive",        "t",  NULL, offsetof(ImageStatusInfo, limit_exclusive) },
-                {}
-        };
-
+static int image_exists(sd_bus *bus, const char *name) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        ImageStatusInfo info = {};
         int r;
 
         assert(bus);
-        assert(path);
-        assert(new_line);
+        assert(name);
 
-        r = bus_map_all_properties(bus,
-                                   "org.freedesktop.machine1",
-                                   path,
-                                   map,
-                                   BUS_MAP_BOOLEAN_AS_BOOL,
-                                   &error,
-                                   &m,
-                                   &info);
-        if (r < 0)
-                return log_error_errno(r, "Could not get properties: %s", bus_error_message(&error, r));
+        r = bus_call_method(bus, bus_machine_mgr, "GetImage", &error, NULL, "s", name);
+        if (r < 0) {
+                if (sd_bus_error_has_name(&error, BUS_ERROR_NO_SUCH_IMAGE))
+                        return 0;
 
-        if (*new_line)
-                printf("\n");
-        *new_line = true;
+                return log_error_errno(r, "Failed to check whether image %s exists: %s", name, bus_error_message(&error, r));
+        }
 
-        print_image_status_info(bus, &info);
-
-        return r;
+        return 1;
 }
 
-typedef struct PoolStatusInfo {
-        const char *path;
-        uint64_t usage;
-        uint64_t limit;
-} PoolStatusInfo;
-
-static void print_pool_status_info(sd_bus *bus, PoolStatusInfo *i) {
-        if (i->path)
-                printf("\t    Path: %s\n", i->path);
-
-        if (i->usage != UINT64_MAX)
-                printf("\t   Usage: %s\n", FORMAT_BYTES(i->usage));
-
-        if (i->limit != UINT64_MAX)
-                printf("\t   Limit: %s\n", FORMAT_BYTES(i->limit));
-}
-
-static int show_pool_info(sd_bus *bus) {
-
-        static const struct bus_properties_map map[]  = {
-                { "PoolPath",  "s",  NULL, offsetof(PoolStatusInfo, path)  },
-                { "PoolUsage", "t",  NULL, offsetof(PoolStatusInfo, usage) },
-                { "PoolLimit", "t",  NULL, offsetof(PoolStatusInfo, limit) },
-                {}
-        };
-
-        PoolStatusInfo info = {
-                .usage = UINT64_MAX,
-                .limit = UINT64_MAX,
-        };
-
+static int verb_start_machine(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        int r;
-
-        assert(bus);
-
-        r = bus_map_all_properties(bus,
-                                   "org.freedesktop.machine1",
-                                   "/org/freedesktop/machine1",
-                                   map,
-                                   0,
-                                   &error,
-                                   &m,
-                                   &info);
-        if (r < 0)
-                return log_error_errno(r, "Could not get properties: %s", bus_error_message(&error, r));
-
-        print_pool_status_info(bus, &info);
-
-        return 0;
-}
-
-static int show_image_properties(sd_bus *bus, const char *path, bool *new_line) {
-        int r;
-
-        assert(bus);
-        assert(path);
-        assert(new_line);
-
-        if (*new_line)
-                printf("\n");
-
-        *new_line = true;
-
-        r = bus_print_all_properties(bus, "org.freedesktop.machine1", path, NULL, arg_property, arg_print_flags, NULL);
-        if (r < 0)
-                log_error_errno(r, "Could not get properties: %m");
-
-        return r;
-}
-
-static int verb_show_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        bool properties, new_line = false;
+        _cleanup_(bus_wait_for_jobs_freep) BusWaitForJobs *w = NULL;
         sd_bus *bus = ASSERT_PTR(userdata);
-        int r = 0;
+        int r;
 
-        properties = !strstr(argv[0], "status");
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+        ask_password_agent_open_if_enabled(arg_transport, arg_ask_password);
 
-        pager_open(arg_pager_flags);
-
-        if (argc <= 1) {
-
-                /* If no argument is specified, inspect the manager
-                 * itself */
-
-                if (properties)
-                        r = show_image_properties(bus, "/org/freedesktop/machine1", &new_line);
-                else
-                        r = show_pool_info(bus);
-                if (r < 0)
-                        return r;
-        }
+        r = bus_wait_for_jobs_new(bus, &w);
+        if (r < 0)
+                return log_error_errno(r, "Could not watch jobs: %m");
 
         for (int i = 1; i < argc; i++) {
                 _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-                const char *path = NULL;
+                _cleanup_free_ char *unit = NULL;
+                const char *object;
 
-                r = bus_call_method(bus, bus_machine_mgr, "GetImage", &error, &reply, "s", argv[i]);
+                r = make_service_name(argv[i], &unit);
                 if (r < 0)
-                        return log_error_errno(r, "Could not get path to image: %s", bus_error_message(&error, r));
+                        return r;
 
-                r = sd_bus_message_read(reply, "o", &path);
+                r = image_exists(bus, argv[i]);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return log_error_errno(SYNTHETIC_ERRNO(ENXIO),
+                                               "Machine image '%s' does not exist.",
+                                               argv[i]);
+
+                r = bus_call_method(
+                                bus,
+                                bus_systemd_mgr,
+                                "StartUnit",
+                                &error,
+                                &reply,
+                                "ss", unit, "fail");
+                if (r < 0)
+                        return log_error_errno(r, "Failed to start unit: %s", bus_error_message(&error, r));
+
+                r = sd_bus_message_read(reply, "o", &object);
                 if (r < 0)
                         return bus_log_parse_error(r);
 
-                if (properties)
-                        r = show_image_properties(bus, path, &new_line);
-                else
-                        r = show_image_info(bus, path, &new_line);
-        }
-
-        return r;
-}
-
-static int verb_kill_machine(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        if (!arg_kill_whom)
-                arg_kill_whom = "all";
-
-        for (int i = 1; i < argc; i++) {
-                r = bus_call_method(
-                                bus,
-                                bus_machine_mgr,
-                                "KillMachine",
-                                &error,
-                                NULL,
-                                "ssi", argv[i], arg_kill_whom, arg_signal);
+                r = bus_wait_for_jobs_add(w, object);
                 if (r < 0)
-                        return log_error_errno(r, "Could not kill machine: %s", bus_error_message(&error, r));
+                        return log_oom();
         }
 
-        return 0;
-}
-
-static int verb_machine_control_one(const char *machine_name, const char *method);
-
-static int verb_reboot_machine(int argc, char *argv[], uintptr_t data, void *userdata) {
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        for (int i = 1; i < argc; i++) {
-                r = verb_machine_control_one(argv[i], "io.systemd.MachineInstance.Reboot");
-                if (r >= 0)
-                        continue;
-                if (r != -EOPNOTSUPP)
-                        return r;
-
-                /* Container fallback: SIGINT to init (sysvinit + systemd compatible) */
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                r = bus_call_method(bus, bus_machine_mgr, "KillMachine", &error, NULL,
-                                   "ssi", argv[i], "leader", (int32_t) SIGINT);
-                if (r < 0)
-                        return log_error_errno(r, "Could not reboot machine '%s': %s", argv[i], bus_error_message(&error, r));
-        }
-
-        return 0;
-}
-
-static int verb_poweroff_machine(int argc, char *argv[], uintptr_t data, void *userdata) {
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        for (int i = 1; i < argc; i++) {
-                /* VM with varlink control socket: QMP graceful powerdown */
-                r = verb_machine_control_one(argv[i], "io.systemd.MachineInstance.PowerOff");
-                if (r >= 0)
-                        continue;
-                if (r != -EOPNOTSUPP)
-                        return r;
-
-                /* Not a VM: signal-based poweroff */
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                r = bus_call_method(bus, bus_machine_mgr, "KillMachine", &error, NULL,
-                                   "ssi", argv[i], "leader", (int32_t) (SIGRTMIN+4));
-                if (r < 0)
-                        return log_error_errno(r, "Could not kill machine: %s", bus_error_message(&error, r));
-        }
-
-        return 0;
-}
-
-static int verb_terminate_machine(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        for (int i = 1; i < argc; i++) {
-                /* VM with varlink control socket: QMP quit (immediate termination) */
-                r = verb_machine_control_one(argv[i], "io.systemd.MachineInstance.Terminate");
-                if (r >= 0)
-                        continue;
-                if (r != -EOPNOTSUPP)
-                        return r;
-
-                /* Not a VM or no varlink socket: fall back to machined */
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                r = bus_call_method(bus, bus_machine_mgr, "TerminateMachine", &error, NULL, "s", argv[i]);
-                if (r < 0)
-                        return log_error_errno(r, "Could not terminate machine: %s", bus_error_message(&error, r));
-        }
-
-        return 0;
-}
-
-/* Look up the controlAddress of a machine by calling machined's Machine.List varlink interface. */
-static int machine_get_control_address(const char *machine_name, char **ret) {
-        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
-        sd_json_variant *reply = NULL;
-        const char *error_id = NULL;
-        int r;
-
-        assert(machine_name);
-        assert(ret);
-
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
-                return -EOPNOTSUPP;
-
-        _cleanup_free_ char *p = NULL;
-        r = runtime_directory_generic(arg_runtime_scope, "systemd/machine/io.systemd.Machine", &p);
-        if (r < 0)
-                return log_error_errno(r, "Failed to determine Machine varlink socket path: %m");
-
-        r = sd_varlink_connect_address(&vl, p);
-        if (r < 0)
-                return log_error_errno(r, "Failed to connect to machined varlink: %m");
-
-        r = sd_varlink_callbo(
-                        vl,
-                        "io.systemd.Machine.List",
-                        &reply,
-                        &error_id,
-                        SD_JSON_BUILD_PAIR_STRING("name", machine_name));
-        if (r < 0)
-                return log_error_errno(r, "Failed to list machine: %m");
-        if (error_id)
-                return log_error_errno(sd_varlink_error_to_errno(error_id, reply),
-                                       "Failed to look up machine '%s': %s", machine_name, error_id);
-
-        sd_json_variant *addr = sd_json_variant_by_key(reply, "controlAddress");
-        if (!addr || !sd_json_variant_is_string(addr))
-                return -EOPNOTSUPP; /* No varlink control socket, caller decides whether to log */
-
-        char *a = strdup(sd_json_variant_string(addr));
-        if (!a)
-                return log_oom();
-
-        *ret = a;
-        return 0;
-}
-
-static int verb_machine_control_one(const char *machine_name, const char *method) {
-        _cleanup_free_ char *address = NULL;
-        int r;
-
-        r = machine_get_control_address(machine_name, &address);
+        r = bus_wait_for_jobs(w, arg_quiet, NULL);
         if (r < 0)
                 return r;
 
-        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
-        r = sd_varlink_connect_address(&vl, address);
-        if (r < 0)
-                return log_error_errno(r, "Failed to connect to machine control socket: %m");
-
-        sd_json_variant *reply = NULL;
-        const char *error_id = NULL;
-        r = sd_varlink_call(vl, method, /* parameters= */ NULL, &reply, &error_id);
-        if (r < 0)
-                return log_error_errno(r, "Failed to call %s: %m", method);
-        if (error_id)
-                return log_error_errno(sd_varlink_error_to_errno(error_id, reply),
-                                       "Machine control call failed: %s", error_id);
-
         return 0;
 }
 
-static int verb_vm_control(int argc, char *argv[], const char *method) {
-        int r;
+static int parse_machine_uid(const char *spec, const char **machine, char **uid) {
+        /*
+         * Whatever is specified in the spec takes priority over global arguments.
+         */
+        char *_uid = NULL;
+        const char *_machine = NULL;
 
-        for (int i = 1; i < argc; i++) {
-                r = verb_machine_control_one(argv[i], method);
-                if (r == -EOPNOTSUPP)
-                        return log_error_errno(r, "Machine '%s' does not expose a varlink control socket.", argv[i]);
-                if (r < 0)
-                        return r;
+        assert(uid);
+        assert(machine);
+
+        if (spec) {
+                const char *at;
+
+                at = strchr(spec, '@');
+                if (at) {
+                        if (at == spec)
+                                /* Do the same as ssh and refuse "@host". */
+                                return -EINVAL;
+
+                        _machine = at + 1;
+                        _uid = strndup(spec, at - spec);
+                        if (!_uid)
+                                return -ENOMEM;
+                } else
+                        _machine = spec;
+        };
+
+        if (arg_uid && !_uid) {
+                _uid = strdup(arg_uid);
+                if (!_uid)
+                        return -ENOMEM;
         }
 
-        return 0;
-}
-
-static int verb_pause(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        return verb_vm_control(argc, argv, "io.systemd.MachineInstance.Pause");
-}
-
-static int verb_resume(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        return verb_vm_control(argc, argv, "io.systemd.MachineInstance.Resume");
-}
-
-static const char *select_copy_method(bool copy_from, bool force) {
-        if (force)
-                return copy_from ? "CopyFromMachineWithFlags" : "CopyToMachineWithFlags";
-        else
-                return copy_from ? "CopyFromMachine" : "CopyToMachine";
-}
-
-static int verb_copy_files(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        _cleanup_free_ char *abs_host_path = NULL;
-        char *dest, *host_path, *container_path;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        bool copy_from;
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        copy_from = streq(argv[0], "copy-from");
-        dest = argv[3] ?: argv[2];
-        host_path = copy_from ? dest : argv[2];
-        container_path = copy_from ? argv[2] : dest;
-
-        if (!path_is_absolute(host_path)) {
-                r = path_make_absolute_cwd(host_path, &abs_host_path);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to make path absolute: %m");
-
-                host_path = abs_host_path;
-        }
-
-        r = bus_message_new_method_call(
-                        bus,
-                        &m,
-                        bus_machine_mgr,
-                        select_copy_method(copy_from, arg_force));
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        r = sd_bus_message_append(
-                        m,
-                        "sss",
-                        argv[1],
-                        copy_from ? container_path : host_path,
-                        copy_from ? host_path : container_path);
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        if (arg_force) {
-                r = sd_bus_message_append(m, "t", (uint64_t) MACHINE_COPY_REPLACE);
-                if (r < 0)
-                        return bus_log_create_error(r);
-        }
-
-        /* This is a slow operation, hence turn off any method call timeouts */
-        r = sd_bus_call(bus, m, USEC_INFINITY, &error, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to copy: %s", bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int verb_bind_volume(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
-                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
-                                       "bind-volume is only supported on the local transport.");
-
-        _cleanup_(bind_volume_freep) BindVolume *bv = NULL;
-        r = bind_volume_parse(argv[2], &bv);
-        if (r < 0)
-                return log_error_errno(r, "Failed to parse bind-volume argument '%s': %m", argv[2]);
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        /* Locate and connect to the target machine before acquiring storage, so a missing
-         * machine doesn't trigger 'create=new' side effects on the StorageProvider. */
-        _cleanup_free_ char *address = NULL;
-        r = machine_get_control_address(argv[1], &address);
-        if (r == -EOPNOTSUPP)
-                return log_error_errno(r, "Machine '%s' does not expose a varlink control socket.", argv[1]);
-        if (r < 0)
-                return r;
-
-        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
-        r = sd_varlink_connect_address(&vl, address);
-        if (r < 0)
-                return log_error_errno(r, "Failed to connect to machine control socket %s: %m", address);
-
-        r = sd_varlink_set_allow_fd_passing_output(vl, true);
-        if (r < 0)
-                return log_error_errno(r, "Failed to enable fd passing on varlink connection: %m");
-
-        _cleanup_(storage_acquire_reply_done) StorageAcquireReply reply = STORAGE_ACQUIRE_REPLY_INIT;
-        _cleanup_free_ char *acquire_error_id = NULL;
-        r = storage_acquire_volume(arg_runtime_scope, bv, arg_ask_password, &acquire_error_id, &reply);
-        if (r < 0) {
-                if (acquire_error_id)
-                        return log_error_errno(r, "Failed to acquire storage volume '%s:%s' from provider: %s",
-                                               bv->provider, bv->volume, acquire_error_id);
-                return log_error_errno(r, "Failed to acquire storage volume '%s:%s' from provider: %m",
-                                       bv->provider, bv->volume);
-        }
-
-        int fd_index = sd_varlink_push_fd(vl, reply.fd);
-        if (fd_index < 0)
-                return log_error_errno(fd_index, "Failed to push storage fd onto varlink connection: %m");
-        TAKE_FD(reply.fd);
-
-        _cleanup_free_ char *name = strjoin(bv->provider, ":", bv->volume);
-        if (!name)
-                return log_oom();
-
-        sd_json_variant *vl_reply = NULL;
-        const char *error_id = NULL;
-        r = sd_varlink_callbo(
-                        vl,
-                        "io.systemd.MachineInstance.AddStorage",
-                        &vl_reply, &error_id,
-                        SD_JSON_BUILD_PAIR_INTEGER("fileDescriptorIndex", fd_index),
-                        SD_JSON_BUILD_PAIR_STRING("name", name),
-                        JSON_BUILD_PAIR_STRING_NON_EMPTY("config", bv->config));
-        if (r < 0)
-                return log_error_errno(r, "Failed to call io.systemd.MachineInstance.AddStorage: %m");
-        if (error_id)
-                return log_error_errno(sd_varlink_error_to_errno(error_id, vl_reply),
-                                       "AddStorage failed for '%s': %s", name, error_id);
-
-        return 0;
-}
-
-static int verb_unbind_volume(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
-                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
-                                       "unbind-volume is only supported on the local transport.");
-
-        r = machine_storage_name_split(argv[2], /* ret_provider= */ NULL, /* ret_volume= */ NULL);
-        if (r == -ENOMEM)
-                return log_oom();
-        if (r < 0)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                       "Invalid unbind-volume name '%s', expected '<provider>:<volume>'.", argv[2]);
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        _cleanup_free_ char *address = NULL;
-        r = machine_get_control_address(argv[1], &address);
-        if (r == -EOPNOTSUPP)
-                return log_error_errno(r, "Machine '%s' does not expose a varlink control socket.", argv[1]);
-        if (r < 0)
-                return r;
-
-        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
-        r = sd_varlink_connect_address(&vl, address);
-        if (r < 0)
-                return log_error_errno(r, "Failed to connect to machine control socket %s: %m", address);
-
-        sd_json_variant *reply = NULL;
-        const char *error_id = NULL;
-        r = sd_varlink_callbo(
-                        vl,
-                        "io.systemd.MachineInstance.RemoveStorage",
-                        &reply, &error_id,
-                        SD_JSON_BUILD_PAIR_STRING("name", argv[2]));
-        if (r < 0)
-                return log_error_errno(r, "Failed to call io.systemd.MachineInstance.RemoveStorage: %m");
-        if (error_id)
-                return log_error_errno(sd_varlink_error_to_errno(error_id, reply),
-                                       "RemoveStorage failed for '%s': %s", argv[2], error_id);
-
-        return 0;
-}
-
-static int verb_bind_mount(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        r = bus_call_method(
-                        bus,
-                        bus_machine_mgr,
-                        "BindMountMachine",
-                        &error,
-                        NULL,
-                        "sssbb",
-                        argv[1],
-                        argv[2],
-                        argv[3],
-                        arg_read_only,
-                        arg_mkdir);
-        if (r < 0)
-                return log_error_errno(r, "Failed to bind mount: %s", bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int on_machine_removed(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
-        PTYForward *forward = ASSERT_PTR(userdata);
-        int r;
-
-        assert(m);
-
-        /* Tell the forwarder to exit on the next vhangup(), so that we still flush out what might be queued
-         * and exit then. */
-
-        r = pty_forward_honor_vhangup(forward);
-        if (r < 0) {
-                /* On error, quit immediately. */
-                log_error_errno(r, "Failed to make PTY forwarder honor vhangup(): %m");
-                (void) sd_event_exit(sd_bus_get_event(sd_bus_message_get_bus(m)), EXIT_FAILURE);
-        }
-
+        *uid = _uid;
+        *machine = isempty(_machine) ? ".host" : _machine;
         return 0;
 }
 
@@ -1554,41 +915,22 @@ static int process_forward(sd_event *event, sd_bus_slot *machine_removed_slot, i
         return 0;
 }
 
-static int parse_machine_uid(const char *spec, const char **machine, char **uid) {
-        /*
-         * Whatever is specified in the spec takes priority over global arguments.
-         */
-        char *_uid = NULL;
-        const char *_machine = NULL;
+static int on_machine_removed(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
+        PTYForward *forward = ASSERT_PTR(userdata);
+        int r;
 
-        assert(uid);
-        assert(machine);
+        assert(m);
 
-        if (spec) {
-                const char *at;
+        /* Tell the forwarder to exit on the next vhangup(), so that we still flush out what might be queued
+         * and exit then. */
 
-                at = strchr(spec, '@');
-                if (at) {
-                        if (at == spec)
-                                /* Do the same as ssh and refuse "@host". */
-                                return -EINVAL;
-
-                        _machine = at + 1;
-                        _uid = strndup(spec, at - spec);
-                        if (!_uid)
-                                return -ENOMEM;
-                } else
-                        _machine = spec;
-        };
-
-        if (arg_uid && !_uid) {
-                _uid = strdup(arg_uid);
-                if (!_uid)
-                        return -ENOMEM;
+        r = pty_forward_honor_vhangup(forward);
+        if (r < 0) {
+                /* On error, quit immediately. */
+                log_error_errno(r, "Failed to make PTY forwarder honor vhangup(): %m");
+                (void) sd_event_exit(sd_bus_get_event(sd_bus_message_get_bus(m)), EXIT_FAILURE);
         }
 
-        *uid = _uid;
-        *machine = isempty(_machine) ? ".host" : _machine;
         return 0;
 }
 
@@ -1729,6 +1071,734 @@ static int verb_shell_machine(int argc, char *argv[], uintptr_t _data, void *use
                 return bus_log_parse_error(r);
 
         return process_forward(event, slot, master, /* flags= */ 0, machine);
+}
+
+static int verb_poweroff_machine(int argc, char *argv[], uintptr_t data, void *userdata);
+
+static int verb_enable_machine(int argc, char *argv[], uintptr_t data, void *userdata) {
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL, *reply = NULL;
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        const char *method;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+        bool enable;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        enable = streq(argv[0], "enable");
+        method = enable ? "EnableUnitFiles" : "DisableUnitFiles";
+
+        r = bus_message_new_method_call(bus, &m, bus_systemd_mgr, method);
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        r = sd_bus_message_open_container(m, 'a', "s");
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        if (enable) {
+                r = sd_bus_message_append(m, "s", "machines.target");
+                if (r < 0)
+                        return bus_log_create_error(r);
+        }
+
+        for (int i = 1; i < argc; i++) {
+                _cleanup_free_ char *unit = NULL;
+
+                r = make_service_name(argv[i], &unit);
+                if (r < 0)
+                        return r;
+
+                r = image_exists(bus, argv[i]);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return log_error_errno(SYNTHETIC_ERRNO(ENXIO),
+                                               "Machine image '%s' does not exist.",
+                                               argv[i]);
+
+                r = sd_bus_message_append(m, "s", unit);
+                if (r < 0)
+                        return bus_log_create_error(r);
+        }
+
+        r = sd_bus_message_close_container(m);
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        if (enable)
+                r = sd_bus_message_append(m, "bb", false, false);
+        else
+                r = sd_bus_message_append(m, "b", false);
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        r = sd_bus_call(bus, m, 0, &error, &reply);
+        if (r < 0)
+                return log_error_errno(r, "Failed to enable or disable unit: %s", bus_error_message(&error, r));
+
+        if (enable) {
+                r = sd_bus_message_read(reply, "b", NULL);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+        }
+
+        r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet);
+        if (r < 0)
+                return r;
+
+        r = bus_service_manager_reload(bus);
+        if (r < 0)
+                return r;
+
+        if (arg_now) {
+                _cleanup_strv_free_ char **new_args = NULL;
+
+                new_args = strv_new(enable ? "start" : "poweroff");
+                if (!new_args)
+                        return log_oom();
+
+                r = strv_extend_strv(&new_args, argv + 1, /* filter_duplicates= */ false);
+                if (r < 0)
+                        return log_oom();
+
+                if (enable)
+                        return verb_start_machine(strv_length(new_args), new_args, data, userdata);
+
+                return verb_poweroff_machine(strv_length(new_args), new_args, data, userdata);
+        }
+
+        return 0;
+}
+
+/* Look up the controlAddress of a machine by calling machined's Machine.List varlink interface. */
+static int machine_get_control_address(const char *machine_name, char **ret) {
+        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
+        sd_json_variant *reply = NULL;
+        const char *error_id = NULL;
+        int r;
+
+        assert(machine_name);
+        assert(ret);
+
+        if (arg_transport != BUS_TRANSPORT_LOCAL)
+                return -EOPNOTSUPP;
+
+        _cleanup_free_ char *p = NULL;
+        r = runtime_directory_generic(arg_runtime_scope, "systemd/machine/io.systemd.Machine", &p);
+        if (r < 0)
+                return log_error_errno(r, "Failed to determine Machine varlink socket path: %m");
+
+        r = sd_varlink_connect_address(&vl, p);
+        if (r < 0)
+                return log_error_errno(r, "Failed to connect to machined varlink: %m");
+
+        r = sd_varlink_callbo(
+                        vl,
+                        "io.systemd.Machine.List",
+                        &reply,
+                        &error_id,
+                        SD_JSON_BUILD_PAIR_STRING("name", machine_name));
+        if (r < 0)
+                return log_error_errno(r, "Failed to list machine: %m");
+        if (error_id)
+                return log_error_errno(sd_varlink_error_to_errno(error_id, reply),
+                                       "Failed to look up machine '%s': %s", machine_name, error_id);
+
+        sd_json_variant *addr = sd_json_variant_by_key(reply, "controlAddress");
+        if (!addr || !sd_json_variant_is_string(addr))
+                return -EOPNOTSUPP; /* No varlink control socket, caller decides whether to log */
+
+        char *a = strdup(sd_json_variant_string(addr));
+        if (!a)
+                return log_oom();
+
+        *ret = a;
+        return 0;
+}
+
+static int verb_machine_control_one(const char *machine_name, const char *method) {
+        _cleanup_free_ char *address = NULL;
+        int r;
+
+        r = machine_get_control_address(machine_name, &address);
+        if (r < 0)
+                return r;
+
+        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
+        r = sd_varlink_connect_address(&vl, address);
+        if (r < 0)
+                return log_error_errno(r, "Failed to connect to machine control socket: %m");
+
+        sd_json_variant *reply = NULL;
+        const char *error_id = NULL;
+        r = sd_varlink_call(vl, method, /* parameters= */ NULL, &reply, &error_id);
+        if (r < 0)
+                return log_error_errno(r, "Failed to call %s: %m", method);
+        if (error_id)
+                return log_error_errno(sd_varlink_error_to_errno(error_id, reply),
+                                       "Machine control call failed: %s", error_id);
+
+        return 0;
+}
+
+static int verb_poweroff_machine(int argc, char *argv[], uintptr_t data, void *userdata) {
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        for (int i = 1; i < argc; i++) {
+                /* VM with varlink control socket: QMP graceful powerdown */
+                r = verb_machine_control_one(argv[i], "io.systemd.MachineInstance.PowerOff");
+                if (r >= 0)
+                        continue;
+                if (r != -EOPNOTSUPP)
+                        return r;
+
+                /* Not a VM: signal-based poweroff */
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                r = bus_call_method(bus, bus_machine_mgr, "KillMachine", &error, NULL,
+                                   "ssi", argv[i], "leader", (int32_t) (SIGRTMIN+4));
+                if (r < 0)
+                        return log_error_errno(r, "Could not kill machine: %s", bus_error_message(&error, r));
+        }
+
+        return 0;
+}
+
+static int verb_reboot_machine(int argc, char *argv[], uintptr_t data, void *userdata) {
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        for (int i = 1; i < argc; i++) {
+                r = verb_machine_control_one(argv[i], "io.systemd.MachineInstance.Reboot");
+                if (r >= 0)
+                        continue;
+                if (r != -EOPNOTSUPP)
+                        return r;
+
+                /* Container fallback: SIGINT to init (sysvinit + systemd compatible) */
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                r = bus_call_method(bus, bus_machine_mgr, "KillMachine", &error, NULL,
+                                   "ssi", argv[i], "leader", (int32_t) SIGINT);
+                if (r < 0)
+                        return log_error_errno(r, "Could not reboot machine '%s': %s", argv[i], bus_error_message(&error, r));
+        }
+
+        return 0;
+}
+
+static int verb_vm_control(int argc, char *argv[], const char *method) {
+        int r;
+
+        for (int i = 1; i < argc; i++) {
+                r = verb_machine_control_one(argv[i], method);
+                if (r == -EOPNOTSUPP)
+                        return log_error_errno(r, "Machine '%s' does not expose a varlink control socket.", argv[i]);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
+}
+
+static int verb_pause(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        return verb_vm_control(argc, argv, "io.systemd.MachineInstance.Pause");
+}
+
+static int verb_resume(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        return verb_vm_control(argc, argv, "io.systemd.MachineInstance.Resume");
+}
+
+static int verb_terminate_machine(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        for (int i = 1; i < argc; i++) {
+                /* VM with varlink control socket: QMP quit (immediate termination) */
+                r = verb_machine_control_one(argv[i], "io.systemd.MachineInstance.Terminate");
+                if (r >= 0)
+                        continue;
+                if (r != -EOPNOTSUPP)
+                        return r;
+
+                /* Not a VM or no varlink socket: fall back to machined */
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                r = bus_call_method(bus, bus_machine_mgr, "TerminateMachine", &error, NULL, "s", argv[i]);
+                if (r < 0)
+                        return log_error_errno(r, "Could not terminate machine: %s", bus_error_message(&error, r));
+        }
+
+        return 0;
+}
+
+static int verb_kill_machine(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        if (!arg_kill_whom)
+                arg_kill_whom = "all";
+
+        for (int i = 1; i < argc; i++) {
+                r = bus_call_method(
+                                bus,
+                                bus_machine_mgr,
+                                "KillMachine",
+                                &error,
+                                NULL,
+                                "ssi", argv[i], arg_kill_whom, arg_signal);
+                if (r < 0)
+                        return log_error_errno(r, "Could not kill machine: %s", bus_error_message(&error, r));
+        }
+
+        return 0;
+}
+
+static const char* select_copy_method(bool copy_from, bool force) {
+        if (force)
+                return copy_from ? "CopyFromMachineWithFlags" : "CopyToMachineWithFlags";
+        else
+                return copy_from ? "CopyFromMachine" : "CopyToMachine";
+}
+
+static int verb_copy_files(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        _cleanup_free_ char *abs_host_path = NULL;
+        char *dest, *host_path, *container_path;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        bool copy_from;
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        copy_from = streq(argv[0], "copy-from");
+        dest = argv[3] ?: argv[2];
+        host_path = copy_from ? dest : argv[2];
+        container_path = copy_from ? argv[2] : dest;
+
+        if (!path_is_absolute(host_path)) {
+                r = path_make_absolute_cwd(host_path, &abs_host_path);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to make path absolute: %m");
+
+                host_path = abs_host_path;
+        }
+
+        r = bus_message_new_method_call(
+                        bus,
+                        &m,
+                        bus_machine_mgr,
+                        select_copy_method(copy_from, arg_force));
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        r = sd_bus_message_append(
+                        m,
+                        "sss",
+                        argv[1],
+                        copy_from ? container_path : host_path,
+                        copy_from ? host_path : container_path);
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        if (arg_force) {
+                r = sd_bus_message_append(m, "t", (uint64_t) MACHINE_COPY_REPLACE);
+                if (r < 0)
+                        return bus_log_create_error(r);
+        }
+
+        /* This is a slow operation, hence turn off any method call timeouts */
+        r = sd_bus_call(bus, m, USEC_INFINITY, &error, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to copy: %s", bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int verb_bind_mount(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        r = bus_call_method(
+                        bus,
+                        bus_machine_mgr,
+                        "BindMountMachine",
+                        &error,
+                        NULL,
+                        "sssbb",
+                        argv[1],
+                        argv[2],
+                        argv[3],
+                        arg_read_only,
+                        arg_mkdir);
+        if (r < 0)
+                return log_error_errno(r, "Failed to bind mount: %s", bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int verb_list_images(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        _cleanup_(table_unrefp) Table *table = NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        pager_open(arg_pager_flags);
+
+        r = bus_call_method(bus, bus_machine_mgr, "ListImages", &error, &reply, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Could not get images: %s", bus_error_message(&error, r));
+
+        table = table_new("name", "type", "ro", "usage", "created", "modified");
+        if (!table)
+                return log_oom();
+
+        if (arg_full)
+                table_set_width(table, 0);
+
+        (void) table_set_align_percent(table, TABLE_HEADER_CELL(3), 100);
+
+        r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "(ssbttto)");
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        for (;;) {
+                uint64_t crtime, mtime, size;
+                const char *name, *type;
+                int ro_int;
+
+                r = sd_bus_message_read(reply, "(ssbttto)", &name, &type, &ro_int, &crtime, &mtime, &size, NULL);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+                if (r == 0)
+                        break;
+
+                if (name[0] == '.' && !arg_all)
+                        continue;
+
+                r = table_add_many(table,
+                                   TABLE_STRING, name,
+                                   TABLE_STRING, type,
+                                   TABLE_BOOLEAN, ro_int,
+                                   TABLE_SET_COLOR, ro_int ? ansi_highlight_red() : NULL,
+                                   TABLE_SIZE, size,
+                                   TABLE_TIMESTAMP, crtime,
+                                   TABLE_TIMESTAMP, mtime);
+                if (r < 0)
+                        return table_log_add_error(r);
+        }
+
+        r = sd_bus_message_exit_container(reply);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        return show_table(table, "images");
+}
+
+static int print_image_hostname(sd_bus *bus, const char *name) {
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        const char *hn;
+        int r;
+
+        r = bus_call_method(bus, bus_machine_mgr, "GetImageHostname", NULL, &reply, "s", name);
+        if (r < 0)
+                return r;
+
+        r = sd_bus_message_read(reply, "s", &hn);
+        if (r < 0)
+                return r;
+
+        if (!isempty(hn))
+                printf("\tHostname: %s\n", hn);
+
+        return 0;
+}
+
+static int print_image_machine_id(sd_bus *bus, const char *name) {
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        sd_id128_t id;
+        int r;
+
+        r = bus_call_method(bus, bus_machine_mgr, "GetImageMachineID", NULL, &reply, "s", name);
+        if (r < 0)
+                return r;
+
+        r = bus_message_read_id128(reply, &id);
+        if (r < 0)
+                return r;
+
+        if (!sd_id128_is_null(id))
+                printf("      Machine ID: " SD_ID128_FORMAT_STR "\n", SD_ID128_FORMAT_VAL(id));
+
+        return 0;
+}
+
+static int print_image_machine_info(sd_bus *bus, const char *name) {
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        int r;
+
+        r = bus_call_method(bus, bus_machine_mgr, "GetImageMachineInfo", NULL, &reply, "s", name);
+        if (r < 0)
+                return r;
+
+        r = sd_bus_message_enter_container(reply, 'a', "{ss}");
+        if (r < 0)
+                return r;
+
+        for (;;) {
+                const char *p, *q;
+
+                r = sd_bus_message_read(reply, "{ss}", &p, &q);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        break;
+
+                if (streq(p, "DEPLOYMENT"))
+                        printf("      Deployment: %s\n", q);
+        }
+
+        r = sd_bus_message_exit_container(reply);
+        if (r < 0)
+                return r;
+
+        return 0;
+}
+
+typedef struct ImageStatusInfo {
+        const char *name;
+        const char *path;
+        const char *type;
+        bool read_only;
+        usec_t crtime;
+        usec_t mtime;
+        uint64_t usage;
+        uint64_t limit;
+        uint64_t usage_exclusive;
+        uint64_t limit_exclusive;
+} ImageStatusInfo;
+
+static void print_image_status_info(sd_bus *bus, ImageStatusInfo *i) {
+        assert(bus);
+        assert(i);
+
+        if (i->name) {
+                fputs(i->name, stdout);
+                putchar('\n');
+        }
+
+        if (i->type)
+                printf("\t    Type: %s\n", i->type);
+
+        if (i->path)
+                printf("\t    Path: %s\n", i->path);
+
+        (void) print_image_hostname(bus, i->name);
+        (void) print_image_machine_id(bus, i->name);
+        (void) print_image_machine_info(bus, i->name);
+
+        print_os_release(bus, "GetImageOSRelease", i->name, "\t      OS: ");
+
+        printf("\t      RO: %s%s%s\n",
+               i->read_only ? ansi_highlight_red() : "",
+               i->read_only ? "read-only" : "writable",
+               i->read_only ? ansi_normal() : "");
+
+        if (timestamp_is_set(i->crtime))
+                printf("\t Created: %s; %s\n",
+                       FORMAT_TIMESTAMP(i->crtime), FORMAT_TIMESTAMP_RELATIVE(i->crtime));
+
+        if (timestamp_is_set(i->mtime))
+                printf("\tModified: %s; %s\n",
+                       FORMAT_TIMESTAMP(i->mtime), FORMAT_TIMESTAMP_RELATIVE(i->mtime));
+
+        if (i->usage != UINT64_MAX) {
+                if (i->usage_exclusive != i->usage && i->usage_exclusive != UINT64_MAX)
+                        printf("\t   Usage: %s (exclusive: %s)\n",
+                               FORMAT_BYTES(i->usage), FORMAT_BYTES(i->usage_exclusive));
+                else
+                        printf("\t   Usage: %s\n", FORMAT_BYTES(i->usage));
+        }
+
+        if (i->limit != UINT64_MAX) {
+                if (i->limit_exclusive != i->limit && i->limit_exclusive != UINT64_MAX)
+                        printf("\t   Limit: %s (exclusive: %s)\n",
+                               FORMAT_BYTES(i->limit), FORMAT_BYTES(i->limit_exclusive));
+                else
+                        printf("\t   Limit: %s\n", FORMAT_BYTES(i->limit));
+        }
+}
+
+static int show_image_info(sd_bus *bus, const char *path, bool *new_line) {
+        static const struct bus_properties_map map[]  = {
+                { "Name",                  "s",  NULL, offsetof(ImageStatusInfo, name)            },
+                { "Path",                  "s",  NULL, offsetof(ImageStatusInfo, path)            },
+                { "Type",                  "s",  NULL, offsetof(ImageStatusInfo, type)            },
+                { "ReadOnly",              "b",  NULL, offsetof(ImageStatusInfo, read_only)       },
+                { "CreationTimestamp",     "t",  NULL, offsetof(ImageStatusInfo, crtime)          },
+                { "ModificationTimestamp", "t",  NULL, offsetof(ImageStatusInfo, mtime)           },
+                { "Usage",                 "t",  NULL, offsetof(ImageStatusInfo, usage)           },
+                { "Limit",                 "t",  NULL, offsetof(ImageStatusInfo, limit)           },
+                { "UsageExclusive",        "t",  NULL, offsetof(ImageStatusInfo, usage_exclusive) },
+                { "LimitExclusive",        "t",  NULL, offsetof(ImageStatusInfo, limit_exclusive) },
+                {}
+        };
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        ImageStatusInfo info = {};
+        int r;
+
+        assert(bus);
+        assert(path);
+        assert(new_line);
+
+        r = bus_map_all_properties(bus,
+                                   "org.freedesktop.machine1",
+                                   path,
+                                   map,
+                                   BUS_MAP_BOOLEAN_AS_BOOL,
+                                   &error,
+                                   &m,
+                                   &info);
+        if (r < 0)
+                return log_error_errno(r, "Could not get properties: %s", bus_error_message(&error, r));
+
+        if (*new_line)
+                printf("\n");
+        *new_line = true;
+
+        print_image_status_info(bus, &info);
+
+        return r;
+}
+
+typedef struct PoolStatusInfo {
+        const char *path;
+        uint64_t usage;
+        uint64_t limit;
+} PoolStatusInfo;
+
+static void print_pool_status_info(sd_bus *bus, PoolStatusInfo *i) {
+        if (i->path)
+                printf("\t    Path: %s\n", i->path);
+
+        if (i->usage != UINT64_MAX)
+                printf("\t   Usage: %s\n", FORMAT_BYTES(i->usage));
+
+        if (i->limit != UINT64_MAX)
+                printf("\t   Limit: %s\n", FORMAT_BYTES(i->limit));
+}
+
+static int show_pool_info(sd_bus *bus) {
+        static const struct bus_properties_map map[]  = {
+                { "PoolPath",  "s",  NULL, offsetof(PoolStatusInfo, path)  },
+                { "PoolUsage", "t",  NULL, offsetof(PoolStatusInfo, usage) },
+                { "PoolLimit", "t",  NULL, offsetof(PoolStatusInfo, limit) },
+                {}
+        };
+
+        PoolStatusInfo info = {
+                .usage = UINT64_MAX,
+                .limit = UINT64_MAX,
+        };
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        int r;
+
+        assert(bus);
+
+        r = bus_map_all_properties(bus,
+                                   "org.freedesktop.machine1",
+                                   "/org/freedesktop/machine1",
+                                   map,
+                                   0,
+                                   &error,
+                                   &m,
+                                   &info);
+        if (r < 0)
+                return log_error_errno(r, "Could not get properties: %s", bus_error_message(&error, r));
+
+        print_pool_status_info(bus, &info);
+
+        return 0;
+}
+
+static int show_image_properties(sd_bus *bus, const char *path, bool *new_line) {
+        int r;
+
+        assert(bus);
+        assert(path);
+        assert(new_line);
+
+        if (*new_line)
+                printf("\n");
+
+        *new_line = true;
+
+        r = bus_print_all_properties(bus, "org.freedesktop.machine1", path, NULL, arg_property, arg_print_flags, NULL);
+        if (r < 0)
+                log_error_errno(r, "Could not get properties: %m");
+
+        return r;
+}
+
+static int verb_show_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        bool properties, new_line = false;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r = 0;
+
+        properties = !strstr(argv[0], "status");
+
+        pager_open(arg_pager_flags);
+
+        if (argc <= 1) {
+
+                /* If no argument is specified, inspect the manager
+                 * itself */
+
+                if (properties)
+                        r = show_image_properties(bus, "/org/freedesktop/machine1", &new_line);
+                else
+                        r = show_pool_info(bus);
+                if (r < 0)
+                        return r;
+        }
+
+        for (int i = 1; i < argc; i++) {
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+                const char *path = NULL;
+
+                r = bus_call_method(bus, bus_machine_mgr, "GetImage", &error, &reply, "s", argv[i]);
+                if (r < 0)
+                        return log_error_errno(r, "Could not get path to image: %s", bus_error_message(&error, r));
+
+                r = sd_bus_message_read(reply, "o", &path);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+
+                if (properties)
+                        r = show_image_properties(bus, path, &new_line);
+                else
+                        r = show_image_info(bus, path, &new_line);
+        }
+
+        return r;
 }
 
 static int normalize_nspawn_filename(const char *name, char **ret_file) {
@@ -1892,53 +1962,6 @@ static int verb_cat_settings(int argc, char *argv[], uintptr_t _data, void *user
         return r;
 }
 
-static int verb_remove_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        for (int i = 1; i < argc; i++) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-
-                r = bus_message_new_method_call(bus, &m, bus_machine_mgr, "RemoveImage");
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_message_append(m, "s", argv[i]);
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                /* This is a slow operation, hence turn off any method call timeouts */
-                r = sd_bus_call(bus, m, USEC_INFINITY, &error, NULL);
-                if (r < 0)
-                        return log_error_errno(r, "Could not remove image: %s", bus_error_message(&error, r));
-        }
-
-        return 0;
-}
-
-static int verb_rename_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        r = bus_call_method(
-                        bus,
-                        bus_machine_mgr,
-                        "RenameImage",
-                        &error,
-                        NULL,
-                        "ss", argv[1], argv[2]);
-        if (r < 0)
-                return log_error_errno(r, "Could not rename image: %s", bus_error_message(&error, r));
-
-        return 0;
-}
-
 static int verb_clone_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
@@ -1959,6 +1982,26 @@ static int verb_clone_image(int argc, char *argv[], uintptr_t _data, void *userd
         r = sd_bus_call(bus, m, USEC_INFINITY, &error, NULL);
         if (r < 0)
                 return log_error_errno(r, "Could not clone image: %s", bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int verb_rename_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        sd_bus *bus = ASSERT_PTR(userdata);
+        int r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        r = bus_call_method(
+                        bus,
+                        bus_machine_mgr,
+                        "RenameImage",
+                        &error,
+                        NULL,
+                        "ss", argv[1], argv[2]);
+        if (r < 0)
+                return log_error_errno(r, "Could not rename image: %s", bus_error_message(&error, r));
 
         return 0;
 }
@@ -1985,189 +2028,28 @@ static int verb_read_only_image(int argc, char *argv[], uintptr_t _data, void *u
         return 0;
 }
 
-static int image_exists(sd_bus *bus, const char *name) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        int r;
-
-        assert(bus);
-        assert(name);
-
-        r = bus_call_method(bus, bus_machine_mgr, "GetImage", &error, NULL, "s", name);
-        if (r < 0) {
-                if (sd_bus_error_has_name(&error, BUS_ERROR_NO_SUCH_IMAGE))
-                        return 0;
-
-                return log_error_errno(r, "Failed to check whether image %s exists: %s", name, bus_error_message(&error, r));
-        }
-
-        return 1;
-}
-
-static int make_service_name(const char *name, char **ret) {
-        int r;
-
-        assert(name);
-        assert(ret);
-        assert(arg_runner >= 0 && arg_runner < _RUNNER_MAX);
-
-        if (!hostname_is_valid(name, 0))
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                       "Invalid machine name %s.", name);
-
-        r = unit_name_build(machine_runner_unit_prefix_table[arg_runner], name, ".service", ret);
-        if (r < 0)
-                return log_error_errno(r, "Failed to build unit name: %m");
-
-        return 0;
-}
-
-static int verb_start_machine(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(bus_wait_for_jobs_freep) BusWaitForJobs *w = NULL;
+static int verb_remove_image(int argc, char *argv[], uintptr_t _data, void *userdata) {
         sd_bus *bus = ASSERT_PTR(userdata);
         int r;
 
         (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-        ask_password_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        r = bus_wait_for_jobs_new(bus, &w);
-        if (r < 0)
-                return log_error_errno(r, "Could not watch jobs: %m");
 
         for (int i = 1; i < argc; i++) {
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-                _cleanup_free_ char *unit = NULL;
-                const char *object;
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
 
-                r = make_service_name(argv[i], &unit);
-                if (r < 0)
-                        return r;
-
-                r = image_exists(bus, argv[i]);
-                if (r < 0)
-                        return r;
-                if (r == 0)
-                        return log_error_errno(SYNTHETIC_ERRNO(ENXIO),
-                                               "Machine image '%s' does not exist.",
-                                               argv[i]);
-
-                r = bus_call_method(
-                                bus,
-                                bus_systemd_mgr,
-                                "StartUnit",
-                                &error,
-                                &reply,
-                                "ss", unit, "fail");
-                if (r < 0)
-                        return log_error_errno(r, "Failed to start unit: %s", bus_error_message(&error, r));
-
-                r = sd_bus_message_read(reply, "o", &object);
-                if (r < 0)
-                        return bus_log_parse_error(r);
-
-                r = bus_wait_for_jobs_add(w, object);
-                if (r < 0)
-                        return log_oom();
-        }
-
-        r = bus_wait_for_jobs(w, arg_quiet, NULL);
-        if (r < 0)
-                return r;
-
-        return 0;
-}
-
-static int verb_enable_machine(int argc, char *argv[], uintptr_t data, void *userdata) {
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL, *reply = NULL;
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        const char *method;
-        sd_bus *bus = ASSERT_PTR(userdata);
-        int r;
-        bool enable;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        enable = streq(argv[0], "enable");
-        method = enable ? "EnableUnitFiles" : "DisableUnitFiles";
-
-        r = bus_message_new_method_call(bus, &m, bus_systemd_mgr, method);
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        r = sd_bus_message_open_container(m, 'a', "s");
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        if (enable) {
-                r = sd_bus_message_append(m, "s", "machines.target");
+                r = bus_message_new_method_call(bus, &m, bus_machine_mgr, "RemoveImage");
                 if (r < 0)
                         return bus_log_create_error(r);
-        }
 
-        for (int i = 1; i < argc; i++) {
-                _cleanup_free_ char *unit = NULL;
-
-                r = make_service_name(argv[i], &unit);
-                if (r < 0)
-                        return r;
-
-                r = image_exists(bus, argv[i]);
-                if (r < 0)
-                        return r;
-                if (r == 0)
-                        return log_error_errno(SYNTHETIC_ERRNO(ENXIO),
-                                               "Machine image '%s' does not exist.",
-                                               argv[i]);
-
-                r = sd_bus_message_append(m, "s", unit);
+                r = sd_bus_message_append(m, "s", argv[i]);
                 if (r < 0)
                         return bus_log_create_error(r);
-        }
 
-        r = sd_bus_message_close_container(m);
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        if (enable)
-                r = sd_bus_message_append(m, "bb", false, false);
-        else
-                r = sd_bus_message_append(m, "b", false);
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        r = sd_bus_call(bus, m, 0, &error, &reply);
-        if (r < 0)
-                return log_error_errno(r, "Failed to enable or disable unit: %s", bus_error_message(&error, r));
-
-        if (enable) {
-                r = sd_bus_message_read(reply, "b", NULL);
+                /* This is a slow operation, hence turn off any method call timeouts */
+                r = sd_bus_call(bus, m, USEC_INFINITY, &error, NULL);
                 if (r < 0)
-                        return bus_log_parse_error(r);
-        }
-
-        r = bus_deserialize_and_dump_unit_file_changes(reply, arg_quiet);
-        if (r < 0)
-                return r;
-
-        r = bus_service_manager_reload(bus);
-        if (r < 0)
-                return r;
-
-        if (arg_now) {
-                _cleanup_strv_free_ char **new_args = NULL;
-
-                new_args = strv_new(enable ? "start" : "poweroff");
-                if (!new_args)
-                        return log_oom();
-
-                r = strv_extend_strv(&new_args, argv + 1, /* filter_duplicates= */ false);
-                if (r < 0)
-                        return log_oom();
-
-                if (enable)
-                        return verb_start_machine(strv_length(new_args), new_args, data, userdata);
-
-                return verb_poweroff_machine(strv_length(new_args), new_args, data, userdata);
+                        return log_error_errno(r, "Could not remove image: %s", bus_error_message(&error, r));
         }
 
         return 0;
@@ -2253,6 +2135,120 @@ static int verb_clean_images(int argc, char *argv[], uintptr_t _data, void *user
         else
                 log_info("Removed %u images in total. Total freed exclusive disk space: %s.",
                          c, FORMAT_BYTES(total));
+
+        return 0;
+}
+
+static int verb_bind_volume(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        if (arg_transport != BUS_TRANSPORT_LOCAL)
+                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
+                                       "bind-volume is only supported on the local transport.");
+
+        _cleanup_(bind_volume_freep) BindVolume *bv = NULL;
+        r = bind_volume_parse(argv[2], &bv);
+        if (r < 0)
+                return log_error_errno(r, "Failed to parse bind-volume argument '%s': %m", argv[2]);
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        /* Locate and connect to the target machine before acquiring storage, so a missing
+         * machine doesn't trigger 'create=new' side effects on the StorageProvider. */
+        _cleanup_free_ char *address = NULL;
+        r = machine_get_control_address(argv[1], &address);
+        if (r == -EOPNOTSUPP)
+                return log_error_errno(r, "Machine '%s' does not expose a varlink control socket.", argv[1]);
+        if (r < 0)
+                return r;
+
+        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
+        r = sd_varlink_connect_address(&vl, address);
+        if (r < 0)
+                return log_error_errno(r, "Failed to connect to machine control socket %s: %m", address);
+
+        r = sd_varlink_set_allow_fd_passing_output(vl, true);
+        if (r < 0)
+                return log_error_errno(r, "Failed to enable fd passing on varlink connection: %m");
+
+        _cleanup_(storage_acquire_reply_done) StorageAcquireReply reply = STORAGE_ACQUIRE_REPLY_INIT;
+        _cleanup_free_ char *acquire_error_id = NULL;
+        r = storage_acquire_volume(arg_runtime_scope, bv, arg_ask_password, &acquire_error_id, &reply);
+        if (r < 0) {
+                if (acquire_error_id)
+                        return log_error_errno(r, "Failed to acquire storage volume '%s:%s' from provider: %s",
+                                               bv->provider, bv->volume, acquire_error_id);
+                return log_error_errno(r, "Failed to acquire storage volume '%s:%s' from provider: %m",
+                                       bv->provider, bv->volume);
+        }
+
+        int fd_index = sd_varlink_push_fd(vl, reply.fd);
+        if (fd_index < 0)
+                return log_error_errno(fd_index, "Failed to push storage fd onto varlink connection: %m");
+        TAKE_FD(reply.fd);
+
+        _cleanup_free_ char *name = strjoin(bv->provider, ":", bv->volume);
+        if (!name)
+                return log_oom();
+
+        sd_json_variant *vl_reply = NULL;
+        const char *error_id = NULL;
+        r = sd_varlink_callbo(
+                        vl,
+                        "io.systemd.MachineInstance.AddStorage",
+                        &vl_reply, &error_id,
+                        SD_JSON_BUILD_PAIR_INTEGER("fileDescriptorIndex", fd_index),
+                        SD_JSON_BUILD_PAIR_STRING("name", name),
+                        JSON_BUILD_PAIR_STRING_NON_EMPTY("config", bv->config));
+        if (r < 0)
+                return log_error_errno(r, "Failed to call io.systemd.MachineInstance.AddStorage: %m");
+        if (error_id)
+                return log_error_errno(sd_varlink_error_to_errno(error_id, vl_reply),
+                                       "AddStorage failed for '%s': %s", name, error_id);
+
+        return 0;
+}
+
+static int verb_unbind_volume(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        if (arg_transport != BUS_TRANSPORT_LOCAL)
+                return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
+                                       "unbind-volume is only supported on the local transport.");
+
+        r = machine_storage_name_split(argv[2], /* ret_provider= */ NULL, /* ret_volume= */ NULL);
+        if (r == -ENOMEM)
+                return log_oom();
+        if (r < 0)
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                       "Invalid unbind-volume name '%s', expected '<provider>:<volume>'.", argv[2]);
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        _cleanup_free_ char *address = NULL;
+        r = machine_get_control_address(argv[1], &address);
+        if (r == -EOPNOTSUPP)
+                return log_error_errno(r, "Machine '%s' does not expose a varlink control socket.", argv[1]);
+        if (r < 0)
+                return r;
+
+        _cleanup_(sd_varlink_unrefp) sd_varlink *vl = NULL;
+        r = sd_varlink_connect_address(&vl, address);
+        if (r < 0)
+                return log_error_errno(r, "Failed to connect to machine control socket %s: %m", address);
+
+        sd_json_variant *reply = NULL;
+        const char *error_id = NULL;
+        r = sd_varlink_callbo(
+                        vl,
+                        "io.systemd.MachineInstance.RemoveStorage",
+                        &reply, &error_id,
+                        SD_JSON_BUILD_PAIR_STRING("name", argv[2]));
+        if (r < 0)
+                return log_error_errno(r, "Failed to call io.systemd.MachineInstance.RemoveStorage: %m");
+        if (error_id)
+                return log_error_errno(sd_varlink_error_to_errno(error_id, reply),
+                                       "RemoveStorage failed for '%s': %s", argv[2], error_id);
 
         return 0;
 }
