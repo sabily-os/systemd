@@ -142,7 +142,7 @@ SPDX-License-Identifier: LGPL-2.1-or-later
   some JSON fragment rather than transfer files, so that we can update it
   independently from any DDI, and it needs no activation cycle. Why? so that
   making additional transfers/components/features available can be done without
-  reloading confext/sysext, and out-band with other configuratoin changes.
+  reloading confext/sysext, and out-band with other configuration changes.
 
 - sysupdate: go through all components, and update them all, one by one.
 
