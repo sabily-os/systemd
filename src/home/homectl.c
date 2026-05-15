@@ -627,85 +627,6 @@ static int acquire_passed_secrets(const char *user_name, UserRecord **ret) {
         return 0;
 }
 
-static int verb_activate_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        int r, ret = 0;
-
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        STRV_FOREACH(i, strv_skip(argv, 1)) {
-                _cleanup_(user_record_unrefp) UserRecord *secret = NULL;
-
-                r = acquire_passed_secrets(*i, &secret);
-                if (r < 0)
-                        return r;
-
-                for (;;) {
-                        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-
-                        r = bus_message_new_method_call(bus, &m, bus_mgr, "ActivateHome");
-                        if (r < 0)
-                                return bus_log_create_error(r);
-
-                        r = sd_bus_message_append(m, "s", *i);
-                        if (r < 0)
-                                return bus_log_create_error(r);
-
-                        r = bus_message_append_secret(m, secret);
-                        if (r < 0)
-                                return bus_log_create_error(r);
-
-                        r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-                        if (r < 0) {
-                                r = handle_generic_user_record_error(*i, secret, &error, r, /* emphasize_current_password= */ false);
-                                if (r < 0) {
-                                        if (ret == 0)
-                                                ret = r;
-
-                                        break;
-                                }
-                        } else
-                                break;
-                }
-        }
-
-        return ret;
-}
-
-static int verb_deactivate_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        int r, ret = 0;
-
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        STRV_FOREACH(i, strv_skip(argv, 1)) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-
-                r = bus_message_new_method_call(bus, &m, bus_mgr, "DeactivateHome");
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_message_append(m, "s", *i);
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to deactivate user home: %s", bus_error_message(&error, r));
-                        if (ret == 0)
-                                ret = r;
-                }
-        }
-
-        return ret;
-}
-
 static void dump_home_record(UserRecord *hr) {
         int r;
 
@@ -796,65 +717,6 @@ static int verb_inspect_homes(int argc, char *argv[], uintptr_t _data, void *use
                         return log_oom();
 
                 return inspect_home(bus, myself);
-        }
-}
-
-static int authenticate_home(sd_bus *bus, const char *name) {
-        _cleanup_(user_record_unrefp) UserRecord *secret = NULL;
-        int r;
-
-        r = acquire_passed_secrets(name, &secret);
-        if (r < 0)
-                return r;
-
-        for (;;) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-
-                r = bus_message_new_method_call(bus, &m, bus_mgr, "AuthenticateHome");
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_message_append(m, "s", name);
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = bus_message_append_secret(m, secret);
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-                if (r < 0) {
-                        r = handle_generic_user_record_error(name, secret, &error, r, false);
-                        if (r >= 0)
-                                continue;
-                }
-                return r;
-        }
-}
-
-static int verb_authenticate_homes(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        int r;
-
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        char **args = strv_skip(argv, 1);
-        if (args) {
-                STRV_FOREACH(arg, args)
-                        RET_GATHER(r, authenticate_home(bus, *arg));
-
-                return r;
-        } else {
-                _cleanup_free_ char *myself = getusername_malloc();
-                if (!myself)
-                        return log_oom();
-
-                return authenticate_home(bus, myself);
         }
 }
 
@@ -1592,182 +1454,6 @@ static int verb_create_home(int argc, char *argv[], uintptr_t _data, void *userd
         return create_home_common(/* input= */ NULL, /* show_enforce_password_policy_hint= */ true);
 }
 
-static int verb_adopt_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r, ret = 0;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        STRV_FOREACH(i, strv_skip(argv, 1)) {
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-                r = bus_message_new_method_call(bus, &m, bus_mgr, "AdoptHome");
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_message_append(m, "st", *i, UINT64_C(0));
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to adopt home: %s", bus_error_message(&error, r));
-                        if (ret == 0)
-                                ret = r;
-                }
-        }
-
-        return ret;
-}
-
-static int register_home_common(sd_bus *bus, sd_json_variant *v) {
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *_bus = NULL;
-        int r;
-
-        assert(v);
-
-        if (!bus) {
-                r = acquire_bus(&_bus);
-                if (r < 0)
-                        return r;
-                bus = _bus;
-        }
-
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        r = bus_message_new_method_call(bus, &m, bus_mgr, "RegisterHome");
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        _cleanup_free_ char *formatted = NULL;
-        r = sd_json_variant_format(v, /* flags= */ 0, &formatted);
-        if (r < 0)
-                return log_error_errno(r, "Failed to format JSON record: %m");
-
-        r = sd_bus_message_append(m, "s", formatted);
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to register home: %s", bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int register_home_one(sd_bus *bus, FILE *f, const char *path) {
-        int r;
-
-        assert(bus);
-        assert(path);
-
-        _cleanup_(sd_json_variant_unrefp) sd_json_variant *v = NULL;
-        unsigned line = 0, column = 0;
-        r = sd_json_parse_file(f, path, SD_JSON_PARSE_MUST_BE_OBJECT|SD_JSON_PARSE_SENSITIVE, &v, &line, &column);
-        if (r < 0)
-                return log_error_errno(r, "[%s:%u:%u] Failed to parse user record: %m", path, line, column);
-
-        return register_home_common(bus, v);
-}
-
-static int verb_register_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        if (arg_identity) {
-                if (argc > 1)
-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Not accepting an arguments if --identity= is specified, refusing.");
-
-                return register_home_one(bus, /* f= */ NULL, arg_identity);
-        }
-
-        if (argc == 1 || (argc == 2 && streq(argv[1], "-")))
-                return register_home_one(bus, /* f= */ stdin, "<stdio>");
-
-        r = 0;
-        STRV_FOREACH(i, strv_skip(argv, 1)) {
-                if (streq(*i, "-"))
-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Refusing reading from standard input if multiple user records are specified.");
-
-                RET_GATHER(r, register_home_one(bus, /* f= */ NULL, *i));
-        }
-
-        return r;
-}
-
-static int verb_unregister_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        int ret = 0;
-        STRV_FOREACH(i, strv_skip(argv, 1)) {
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-                r = bus_message_new_method_call(bus, &m, bus_mgr, "UnregisterHome");
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_message_append(m, "s", *i);
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, /* ret_reply= */ NULL);
-                if (r < 0)
-                        RET_GATHER(ret, log_error_errno(r, "Failed to unregister home: %s", bus_error_message(&error, r)));
-        }
-
-        return ret;
-}
-
-static int verb_remove_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        int r, ret = 0;
-
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
-
-        STRV_FOREACH(i, strv_skip(argv, 1)) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-
-                r = bus_message_new_method_call(bus, &m, bus_mgr, "RemoveHome");
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_message_append(m, "s", *i);
-                if (r < 0)
-                        return bus_log_create_error(r);
-
-                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-                if (r < 0) {
-                        log_error_errno(r, "Failed to remove home: %s", bus_error_message(&error, r));
-                        if (ret == 0)
-                                ret = r;
-                }
-        }
-
-        return ret;
-}
-
 static int acquire_updated_home_record(
                 sd_bus *bus,
                 const char *username,
@@ -2265,7 +1951,7 @@ static int verb_resize_home(int argc, char *argv[], uintptr_t _data, void *userd
         return 0;
 }
 
-static int verb_lock_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+static int verb_remove_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
         int r, ret = 0;
 
@@ -2273,11 +1959,13 @@ static int verb_lock_home(int argc, char *argv[], uintptr_t _data, void *userdat
         if (r < 0)
                 return r;
 
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
         STRV_FOREACH(i, strv_skip(argv, 1)) {
                 _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
                 _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
 
-                r = bus_message_new_method_call(bus, &m, bus_mgr, "LockHome");
+                r = bus_message_new_method_call(bus, &m, bus_mgr, "RemoveHome");
                 if (r < 0)
                         return bus_log_create_error(r);
 
@@ -2287,7 +1975,7 @@ static int verb_lock_home(int argc, char *argv[], uintptr_t _data, void *userdat
 
                 r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
                 if (r < 0) {
-                        log_error_errno(r, "Failed to lock home: %s", bus_error_message(&error, r));
+                        log_error_errno(r, "Failed to remove home: %s", bus_error_message(&error, r));
                         if (ret == 0)
                                 ret = r;
                 }
@@ -2296,7 +1984,7 @@ static int verb_lock_home(int argc, char *argv[], uintptr_t _data, void *userdat
         return ret;
 }
 
-static int verb_unlock_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+static int verb_activate_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
         int r, ret = 0;
 
@@ -2315,7 +2003,7 @@ static int verb_unlock_home(int argc, char *argv[], uintptr_t _data, void *userd
                         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
                         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
 
-                        r = bus_message_new_method_call(bus, &m, bus_mgr, "UnlockHome");
+                        r = bus_message_new_method_call(bus, &m, bus_mgr, "ActivateHome");
                         if (r < 0)
                                 return bus_log_create_error(r);
 
@@ -2329,7 +2017,7 @@ static int verb_unlock_home(int argc, char *argv[], uintptr_t _data, void *userd
 
                         r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
                         if (r < 0) {
-                                r = handle_generic_user_record_error(argv[1], secret, &error, r, false);
+                                r = handle_generic_user_record_error(*i, secret, &error, r, /* emphasize_current_password= */ false);
                                 if (r < 0) {
                                         if (ret == 0)
                                                 ret = r;
@@ -2342,6 +2030,58 @@ static int verb_unlock_home(int argc, char *argv[], uintptr_t _data, void *userd
         }
 
         return ret;
+}
+
+static int verb_deactivate_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        int r, ret = 0;
+
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        STRV_FOREACH(i, strv_skip(argv, 1)) {
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+
+                r = bus_message_new_method_call(bus, &m, bus_mgr, "DeactivateHome");
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "s", *i);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+                if (r < 0) {
+                        log_error_errno(r, "Failed to deactivate user home: %s", bus_error_message(&error, r));
+                        if (ret == 0)
+                                ret = r;
+                }
+        }
+
+        return ret;
+}
+
+static int verb_deactivate_all_homes(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        int r;
+
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        r = bus_message_new_method_call(bus, &m, bus_mgr, "DeactivateAllHomes");
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to deactivate all homes: %s", bus_error_message(&error, r));
+
+        return 0;
 }
 
 static int verb_with_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
@@ -2467,6 +2207,555 @@ static int verb_with_home(int argc, char *argv[], uintptr_t _data, void *userdat
         return ret;
 }
 
+static int authenticate_home(sd_bus *bus, const char *name) {
+        _cleanup_(user_record_unrefp) UserRecord *secret = NULL;
+        int r;
+
+        r = acquire_passed_secrets(name, &secret);
+        if (r < 0)
+                return r;
+
+        for (;;) {
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+
+                r = bus_message_new_method_call(bus, &m, bus_mgr, "AuthenticateHome");
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "s", name);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = bus_message_append_secret(m, secret);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+                if (r < 0) {
+                        r = handle_generic_user_record_error(name, secret, &error, r, false);
+                        if (r >= 0)
+                                continue;
+                }
+                return r;
+        }
+}
+
+static int verb_authenticate_homes(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        int r;
+
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        char **args = strv_skip(argv, 1);
+        if (args) {
+                STRV_FOREACH(arg, args)
+                        RET_GATHER(r, authenticate_home(bus, *arg));
+
+                return r;
+        } else {
+                _cleanup_free_ char *myself = getusername_malloc();
+                if (!myself)
+                        return log_oom();
+
+                return authenticate_home(bus, myself);
+        }
+}
+
+static int verb_adopt_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r, ret = 0;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        STRV_FOREACH(i, strv_skip(argv, 1)) {
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+                r = bus_message_new_method_call(bus, &m, bus_mgr, "AdoptHome");
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "st", *i, UINT64_C(0));
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+                if (r < 0) {
+                        log_error_errno(r, "Failed to adopt home: %s", bus_error_message(&error, r));
+                        if (ret == 0)
+                                ret = r;
+                }
+        }
+
+        return ret;
+}
+
+static int register_home_common(sd_bus *bus, sd_json_variant *v) {
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *_bus = NULL;
+        int r;
+
+        assert(v);
+
+        if (!bus) {
+                r = acquire_bus(&_bus);
+                if (r < 0)
+                        return r;
+                bus = _bus;
+        }
+
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        r = bus_message_new_method_call(bus, &m, bus_mgr, "RegisterHome");
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        _cleanup_free_ char *formatted = NULL;
+        r = sd_json_variant_format(v, /* flags= */ 0, &formatted);
+        if (r < 0)
+                return log_error_errno(r, "Failed to format JSON record: %m");
+
+        r = sd_bus_message_append(m, "s", formatted);
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to register home: %s", bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int register_home_one(sd_bus *bus, FILE *f, const char *path) {
+        int r;
+
+        assert(bus);
+        assert(path);
+
+        _cleanup_(sd_json_variant_unrefp) sd_json_variant *v = NULL;
+        unsigned line = 0, column = 0;
+        r = sd_json_parse_file(f, path, SD_JSON_PARSE_MUST_BE_OBJECT|SD_JSON_PARSE_SENSITIVE, &v, &line, &column);
+        if (r < 0)
+                return log_error_errno(r, "[%s:%u:%u] Failed to parse user record: %m", path, line, column);
+
+        return register_home_common(bus, v);
+}
+
+static int verb_register_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        if (arg_identity) {
+                if (argc > 1)
+                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Not accepting an arguments if --identity= is specified, refusing.");
+
+                return register_home_one(bus, /* f= */ NULL, arg_identity);
+        }
+
+        if (argc == 1 || (argc == 2 && streq(argv[1], "-")))
+                return register_home_one(bus, /* f= */ stdin, "<stdio>");
+
+        r = 0;
+        STRV_FOREACH(i, strv_skip(argv, 1)) {
+                if (streq(*i, "-"))
+                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Refusing reading from standard input if multiple user records are specified.");
+
+                RET_GATHER(r, register_home_one(bus, /* f= */ NULL, *i));
+        }
+
+        return r;
+}
+
+static int verb_unregister_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        (void) polkit_agent_open_if_enabled(arg_transport, arg_ask_password);
+
+        int ret = 0;
+        STRV_FOREACH(i, strv_skip(argv, 1)) {
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+                r = bus_message_new_method_call(bus, &m, bus_mgr, "UnregisterHome");
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "s", *i);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, /* ret_reply= */ NULL);
+                if (r < 0)
+                        RET_GATHER(ret, log_error_errno(r, "Failed to unregister home: %s", bus_error_message(&error, r)));
+        }
+
+        return ret;
+}
+
+static int verb_list_signing_keys(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+        r = bus_call_method(bus, bus_mgr, "ListSigningKeys", &error, &reply, NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to list signing keys: %s", bus_error_message(&error, r));
+
+        _cleanup_(table_unrefp) Table *table = table_new("name", "key");
+        if (!table)
+                return log_oom();
+
+        r = sd_bus_message_enter_container(reply, 'a', "(sst)");
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        for (;;) {
+                const char *name, *pem;
+
+                r = sd_bus_message_read(reply, "(sst)", &name, &pem, NULL);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+                if (r == 0)
+                        break;
+
+                _cleanup_free_ char *h = NULL;
+                if (!sd_json_format_enabled(arg_json_format_flags)) {
+                        /* Let's decode the PEM key to DER (so that we lose prefix/suffix), then truncate it
+                         * for display reasons. */
+
+                        r = dlopen_libcrypto(LOG_DEBUG);
+                        if (r < 0)
+                                return r;
+
+                        _cleanup_(EVP_PKEY_freep) EVP_PKEY *key = NULL;
+                        r = openssl_pubkey_from_pem(pem, SIZE_MAX, &key);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse PEM: %m");
+
+                        _cleanup_free_ void *der = NULL;
+                        int n = sym_i2d_PUBKEY(key, (unsigned char**) &der);
+                        if (n < 0)
+                                return log_error_errno(SYNTHETIC_ERRNO(ENOTRECOVERABLE), "Failed to encode key as DER.");
+
+                        ssize_t m = base64mem(der, MIN(n, 64), &h);
+                        if (m < 0)
+                                return log_oom();
+                        if (n > 64) /* check if we truncated the original version */
+                                if (!strextend(&h, glyph(GLYPH_ELLIPSIS)))
+                                        return log_oom();
+                }
+
+                r = table_add_many(
+                                table,
+                                TABLE_STRING, name,
+                                TABLE_STRING, h ?: pem);
+                if (r < 0)
+                        return table_log_add_error(r);
+        }
+
+        r = sd_bus_message_exit_container(reply);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        if (!table_isempty(table) || sd_json_format_enabled(arg_json_format_flags)) {
+                r = table_set_sort(table, (size_t) 0);
+                if (r < 0)
+                        return table_log_sort_error(r);
+
+                r = table_print_with_pager(table, arg_json_format_flags, arg_pager_flags, arg_legend);
+                if (r < 0)
+                        return r;
+        }
+
+        if (arg_legend && !sd_json_format_enabled(arg_json_format_flags)) {
+                if (table_isempty(table))
+                        printf("No signing keys.\n");
+                else
+                        printf("\n%zu signing keys listed.\n", table_get_rows(table) - 1);
+        }
+
+        return 0;
+}
+
+static int verb_get_signing_key(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        char **keys = argc >= 2 ? strv_skip(argv, 1) : STRV_MAKE("local.public");
+        int ret = 0;
+        STRV_FOREACH(k, keys) {
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
+                r = bus_call_method(bus, bus_mgr, "GetSigningKey", &error, &reply, "s", *k);
+                if (r < 0) {
+                        RET_GATHER(ret, log_error_errno(r, "Failed to get signing key '%s': %s", *k, bus_error_message(&error, r)));
+                        continue;
+                }
+
+                const char *pem;
+                r = sd_bus_message_read(reply, "st", &pem, NULL);
+                if (r < 0) {
+                        RET_GATHER(ret, bus_log_parse_error(r));
+                        continue;
+                }
+
+                fputs(pem, stdout);
+                if (!endswith(pem, "\n"))
+                        fputc('\n', stdout);
+
+                fflush(stdout);
+        }
+
+        return ret;
+}
+
+static int add_signing_key_one(sd_bus *bus, const char *fn, FILE *key) {
+        int r;
+
+        assert_se(bus);
+        assert_se(fn);
+        assert_se(key);
+
+        _cleanup_free_ char *pem = NULL;
+        r = read_full_stream(key, &pem, /* ret_size= */ NULL);
+        if (r < 0)
+                return log_error_errno(r, "Failed to read key '%s': %m", fn);
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        r = bus_call_method(bus, bus_mgr, "AddSigningKey", &error, /* ret_reply= */ NULL, "sst", fn, pem, UINT64_C(0));
+        if (r < 0)
+                return log_error_errno(r, "Failed to add signing key '%s': %s", fn, bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int verb_add_signing_key(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        int ret = EXIT_SUCCESS;
+        if (argc < 2 || streq(argv[1], "-")) {
+                if (!arg_key_name)
+                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Key name must be specified via --key-name= when reading key from standard input, refusing.");
+
+                RET_GATHER(ret, add_signing_key_one(bus, arg_key_name, stdin));
+        } else {
+                /* Refuse if more han one key is specified in combination with --key-name= */
+                if (argc >= 3 && arg_key_name)
+                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "--key-name= is not supported if multiple signing keys are specified, refusing.");
+
+                STRV_FOREACH(k, strv_skip(argv, 1)) {
+
+                        if (streq(*k, "-"))
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Refusing to read from standard input if multiple keys are specified.");
+
+                        _cleanup_free_ char *fn = NULL;
+                        if (!arg_key_name) {
+                                r = path_extract_filename(*k, &fn);
+                                if (r < 0) {
+                                        RET_GATHER(ret, log_error_errno(r, "Failed to extract filename from path '%s': %m", *k));
+                                        continue;
+                                }
+                        }
+
+                        _cleanup_fclose_ FILE *f = fopen(*k, "re");
+                        if (!f) {
+                                RET_GATHER(ret, log_error_errno(errno, "Failed to open '%s': %m", *k));
+                                continue;
+                        }
+
+                        RET_GATHER(ret, add_signing_key_one(bus, fn ?: arg_key_name, f));
+                }
+        }
+
+        return ret;
+}
+
+static int add_signing_keys_from_credentials(void) {
+        int r;
+
+        _cleanup_close_ int fd = open_credentials_dir();
+        if (IN_SET(fd, -ENXIO, -ENOENT)) /* Credential env var not set, or dir doesn't exist. */
+                return 0;
+        if (fd < 0)
+                return log_error_errno(fd, "Failed to open credentials directory: %m");
+
+        _cleanup_free_ DirectoryEntries *des = NULL;
+        r = readdir_all(fd, RECURSE_DIR_SORT|RECURSE_DIR_IGNORE_DOT|RECURSE_DIR_ENSURE_TYPE, &des);
+        if (r < 0)
+                return log_error_errno(r, "Failed to enumerate credentials: %m");
+
+        int ret = 0;
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        FOREACH_ARRAY(i, des->entries, des->n_entries) {
+                struct dirent *de = *i;
+                if (de->d_type != DT_REG)
+                        continue;
+
+                const char *e = startswith(de->d_name, "home.add-signing-key.");
+                if (!e)
+                        continue;
+
+                if (!filename_is_valid(e))
+                        continue;
+
+                if (!bus) {
+                        r = acquire_bus(&bus);
+                        if (r < 0)
+                                return r;
+                }
+
+                _cleanup_fclose_ FILE *f = NULL;
+                r = xfopenat(fd, de->d_name, "re", O_NOFOLLOW, &f);
+                if (r < 0) {
+                        RET_GATHER(ret, log_error_errno(r, "Failed to open credential '%s': %m", de->d_name));
+                        continue;
+                }
+
+                RET_GATHER(ret, add_signing_key_one(bus, e, f));
+        }
+
+        return ret;
+}
+
+static int remove_signing_key_one(sd_bus *bus, const char *fn) {
+        int r;
+
+        assert_se(bus);
+        assert_se(fn);
+
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        r = bus_call_method(bus, bus_mgr, "RemoveSigningKey", &error, /* ret_reply= */ NULL, "st", fn, UINT64_C(0));
+        if (r < 0)
+                return log_error_errno(r, "Failed to remove signing key '%s': %s", fn, bus_error_message(&error, r));
+
+        return 0;
+}
+
+static int verb_remove_signing_key(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        int r;
+
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        r = EXIT_SUCCESS;
+        STRV_FOREACH(k, strv_skip(argv, 1))
+                RET_GATHER(r, remove_signing_key_one(bus, *k));
+
+        return r;
+}
+
+static int verb_lock_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        int r, ret = 0;
+
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        STRV_FOREACH(i, strv_skip(argv, 1)) {
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+
+                r = bus_message_new_method_call(bus, &m, bus_mgr, "LockHome");
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "s", *i);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+                if (r < 0) {
+                        log_error_errno(r, "Failed to lock home: %s", bus_error_message(&error, r));
+                        if (ret == 0)
+                                ret = r;
+                }
+        }
+
+        return ret;
+}
+
+static int verb_unlock_home(int argc, char *argv[], uintptr_t _data, void *userdata) {
+        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
+        int r, ret = 0;
+
+        r = acquire_bus(&bus);
+        if (r < 0)
+                return r;
+
+        STRV_FOREACH(i, strv_skip(argv, 1)) {
+                _cleanup_(user_record_unrefp) UserRecord *secret = NULL;
+
+                r = acquire_passed_secrets(*i, &secret);
+                if (r < 0)
+                        return r;
+
+                for (;;) {
+                        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+
+                        r = bus_message_new_method_call(bus, &m, bus_mgr, "UnlockHome");
+                        if (r < 0)
+                                return bus_log_create_error(r);
+
+                        r = sd_bus_message_append(m, "s", *i);
+                        if (r < 0)
+                                return bus_log_create_error(r);
+
+                        r = bus_message_append_secret(m, secret);
+                        if (r < 0)
+                                return bus_log_create_error(r);
+
+                        r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
+                        if (r < 0) {
+                                r = handle_generic_user_record_error(argv[1], secret, &error, r, false);
+                                if (r < 0) {
+                                        if (ret == 0)
+                                                ret = r;
+
+                                        break;
+                                }
+                        } else
+                                break;
+                }
+        }
+
+        return ret;
+}
+
 static int verb_lock_all_homes(int argc, char *argv[], uintptr_t _data, void *userdata) {
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
@@ -2484,27 +2773,6 @@ static int verb_lock_all_homes(int argc, char *argv[], uintptr_t _data, void *us
         r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
         if (r < 0)
                 return log_error_errno(r, "Failed to lock all homes: %s", bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int verb_deactivate_all_homes(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        int r;
-
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        r = bus_message_new_method_call(bus, &m, bus_mgr, "DeactivateAllHomes");
-        if (r < 0)
-                return bus_log_create_error(r);
-
-        r = sd_bus_call(bus, m, HOME_SLOW_BUS_CALL_TIMEOUT_USEC, &error, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to deactivate all homes: %s", bus_error_message(&error, r));
 
         return 0;
 }
@@ -2763,8 +3031,6 @@ static int create_interactively(void) {
         log_info("Successfully created account '%s'.", username);
         return 0;
 }
-
-static int add_signing_keys_from_credentials(void);
 
 static int verb_firstboot(int argc, char *argv[], uintptr_t _data, void *userdata) {
         int r;
@@ -5048,274 +5314,6 @@ static int fallback_shell(int argc, char *argv[]) {
 
         execv(shell, l);
         return log_error_errno(errno, "Failed to execute shell '%s': %m", shell);
-}
-
-static int verb_list_signing_keys(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        r = bus_call_method(bus, bus_mgr, "ListSigningKeys", &error, &reply, NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to list signing keys: %s", bus_error_message(&error, r));
-
-        _cleanup_(table_unrefp) Table *table = table_new("name", "key");
-        if (!table)
-                return log_oom();
-
-        r = sd_bus_message_enter_container(reply, 'a', "(sst)");
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        for (;;) {
-                const char *name, *pem;
-
-                r = sd_bus_message_read(reply, "(sst)", &name, &pem, NULL);
-                if (r < 0)
-                        return bus_log_parse_error(r);
-                if (r == 0)
-                        break;
-
-                _cleanup_free_ char *h = NULL;
-                if (!sd_json_format_enabled(arg_json_format_flags)) {
-                        /* Let's decode the PEM key to DER (so that we lose prefix/suffix), then truncate it
-                         * for display reasons. */
-
-                        r = dlopen_libcrypto(LOG_DEBUG);
-                        if (r < 0)
-                                return r;
-
-                        _cleanup_(EVP_PKEY_freep) EVP_PKEY *key = NULL;
-                        r = openssl_pubkey_from_pem(pem, SIZE_MAX, &key);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to parse PEM: %m");
-
-                        _cleanup_free_ void *der = NULL;
-                        int n = sym_i2d_PUBKEY(key, (unsigned char**) &der);
-                        if (n < 0)
-                                return log_error_errno(SYNTHETIC_ERRNO(ENOTRECOVERABLE), "Failed to encode key as DER.");
-
-                        ssize_t m = base64mem(der, MIN(n, 64), &h);
-                        if (m < 0)
-                                return log_oom();
-                        if (n > 64) /* check if we truncated the original version */
-                                if (!strextend(&h, glyph(GLYPH_ELLIPSIS)))
-                                        return log_oom();
-                }
-
-                r = table_add_many(
-                                table,
-                                TABLE_STRING, name,
-                                TABLE_STRING, h ?: pem);
-                if (r < 0)
-                        return table_log_add_error(r);
-        }
-
-        r = sd_bus_message_exit_container(reply);
-        if (r < 0)
-                return bus_log_parse_error(r);
-
-        if (!table_isempty(table) || sd_json_format_enabled(arg_json_format_flags)) {
-                r = table_set_sort(table, (size_t) 0);
-                if (r < 0)
-                        return table_log_sort_error(r);
-
-                r = table_print_with_pager(table, arg_json_format_flags, arg_pager_flags, arg_legend);
-                if (r < 0)
-                        return r;
-        }
-
-        if (arg_legend && !sd_json_format_enabled(arg_json_format_flags)) {
-                if (table_isempty(table))
-                        printf("No signing keys.\n");
-                else
-                        printf("\n%zu signing keys listed.\n", table_get_rows(table) - 1);
-        }
-
-        return 0;
-}
-
-static int verb_get_signing_key(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        char **keys = argc >= 2 ? strv_skip(argv, 1) : STRV_MAKE("local.public");
-        int ret = 0;
-        STRV_FOREACH(k, keys) {
-                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-                _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-                r = bus_call_method(bus, bus_mgr, "GetSigningKey", &error, &reply, "s", *k);
-                if (r < 0) {
-                        RET_GATHER(ret, log_error_errno(r, "Failed to get signing key '%s': %s", *k, bus_error_message(&error, r)));
-                        continue;
-                }
-
-                const char *pem;
-                r = sd_bus_message_read(reply, "st", &pem, NULL);
-                if (r < 0) {
-                        RET_GATHER(ret, bus_log_parse_error(r));
-                        continue;
-                }
-
-                fputs(pem, stdout);
-                if (!endswith(pem, "\n"))
-                        fputc('\n', stdout);
-
-                fflush(stdout);
-        }
-
-        return ret;
-}
-
-static int add_signing_key_one(sd_bus *bus, const char *fn, FILE *key) {
-        int r;
-
-        assert_se(bus);
-        assert_se(fn);
-        assert_se(key);
-
-        _cleanup_free_ char *pem = NULL;
-        r = read_full_stream(key, &pem, /* ret_size= */ NULL);
-        if (r < 0)
-                return log_error_errno(r, "Failed to read key '%s': %m", fn);
-
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        r = bus_call_method(bus, bus_mgr, "AddSigningKey", &error, /* ret_reply= */ NULL, "sst", fn, pem, UINT64_C(0));
-        if (r < 0)
-                return log_error_errno(r, "Failed to add signing key '%s': %s", fn, bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int verb_add_signing_key(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        int ret = EXIT_SUCCESS;
-        if (argc < 2 || streq(argv[1], "-")) {
-                if (!arg_key_name)
-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Key name must be specified via --key-name= when reading key from standard input, refusing.");
-
-                RET_GATHER(ret, add_signing_key_one(bus, arg_key_name, stdin));
-        } else {
-                /* Refuse if more han one key is specified in combination with --key-name= */
-                if (argc >= 3 && arg_key_name)
-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "--key-name= is not supported if multiple signing keys are specified, refusing.");
-
-                STRV_FOREACH(k, strv_skip(argv, 1)) {
-
-                        if (streq(*k, "-"))
-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Refusing to read from standard input if multiple keys are specified.");
-
-                        _cleanup_free_ char *fn = NULL;
-                        if (!arg_key_name) {
-                                r = path_extract_filename(*k, &fn);
-                                if (r < 0) {
-                                        RET_GATHER(ret, log_error_errno(r, "Failed to extract filename from path '%s': %m", *k));
-                                        continue;
-                                }
-                        }
-
-                        _cleanup_fclose_ FILE *f = fopen(*k, "re");
-                        if (!f) {
-                                RET_GATHER(ret, log_error_errno(errno, "Failed to open '%s': %m", *k));
-                                continue;
-                        }
-
-                        RET_GATHER(ret, add_signing_key_one(bus, fn ?: arg_key_name, f));
-                }
-        }
-
-        return ret;
-}
-
-static int add_signing_keys_from_credentials(void) {
-        int r;
-
-        _cleanup_close_ int fd = open_credentials_dir();
-        if (IN_SET(fd, -ENXIO, -ENOENT)) /* Credential env var not set, or dir doesn't exist. */
-                return 0;
-        if (fd < 0)
-                return log_error_errno(fd, "Failed to open credentials directory: %m");
-
-        _cleanup_free_ DirectoryEntries *des = NULL;
-        r = readdir_all(fd, RECURSE_DIR_SORT|RECURSE_DIR_IGNORE_DOT|RECURSE_DIR_ENSURE_TYPE, &des);
-        if (r < 0)
-                return log_error_errno(r, "Failed to enumerate credentials: %m");
-
-        int ret = 0;
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        FOREACH_ARRAY(i, des->entries, des->n_entries) {
-                struct dirent *de = *i;
-                if (de->d_type != DT_REG)
-                        continue;
-
-                const char *e = startswith(de->d_name, "home.add-signing-key.");
-                if (!e)
-                        continue;
-
-                if (!filename_is_valid(e))
-                        continue;
-
-                if (!bus) {
-                        r = acquire_bus(&bus);
-                        if (r < 0)
-                                return r;
-                }
-
-                _cleanup_fclose_ FILE *f = NULL;
-                r = xfopenat(fd, de->d_name, "re", O_NOFOLLOW, &f);
-                if (r < 0) {
-                        RET_GATHER(ret, log_error_errno(r, "Failed to open credential '%s': %m", de->d_name));
-                        continue;
-                }
-
-                RET_GATHER(ret, add_signing_key_one(bus, e, f));
-        }
-
-        return ret;
-}
-
-static int remove_signing_key_one(sd_bus *bus, const char *fn) {
-        int r;
-
-        assert_se(bus);
-        assert_se(fn);
-
-        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
-        r = bus_call_method(bus, bus_mgr, "RemoveSigningKey", &error, /* ret_reply= */ NULL, "st", fn, UINT64_C(0));
-        if (r < 0)
-                return log_error_errno(r, "Failed to remove signing key '%s': %s", fn, bus_error_message(&error, r));
-
-        return 0;
-}
-
-static int verb_remove_signing_key(int argc, char *argv[], uintptr_t _data, void *userdata) {
-        int r;
-
-        _cleanup_(sd_bus_flush_close_unrefp) sd_bus *bus = NULL;
-        r = acquire_bus(&bus);
-        if (r < 0)
-                return r;
-
-        r = EXIT_SUCCESS;
-        STRV_FOREACH(k, strv_skip(argv, 1))
-                RET_GATHER(r, remove_signing_key_one(bus, *k));
-
-        return r;
 }
 
 static int run(int argc, char *argv[]) {
