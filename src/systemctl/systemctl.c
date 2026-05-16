@@ -1112,9 +1112,9 @@ VERB_SCOPE(, verb_start,             "condrestart",      NULL, 2,      VERB_ANY,
 VERB_SCOPE(, verb_is_active,         "check",            NULL, 2,      VERB_ANY, VERB_ONLINE_ONLY, /* help= */ NULL); /* deprecated alias of is-active */
 
 int systemctl_main(char **args) {
-        const Verb *verb = verbs_find_verb(args[0],
-                                           ALIGN_PTR(__start_SYSTEMD_VERBS),
-                                           __stop_SYSTEMD_VERBS);
+        assert((uintptr_t) __start_SYSTEMD_VERBS % sizeof(void*) == 0);
+        const Verb *verb = verbs_find_verb(args[0], __start_SYSTEMD_VERBS, __stop_SYSTEMD_VERBS);
+
         if (verb && (verb->flags & VERB_ONLINE_ONLY) && arg_root)
                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
                                        "Verb '%s' cannot be used with --root= or --image=.",
